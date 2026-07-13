@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>탄막슈팅게임</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: #111;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            font-family: sans-serif;
+            color: #eee;
+        }
+        #game-container {
+            box-shadow: 0 0 20px rgba(0, 0, 0, 0.5);
+        }
+    </style>
+</head>
+<body>
+    <div id="game-container"></div>
+
+    <script src="https://cdn.jsdelivr.net/npm/phaser@3.80.1/dist/phaser.min.js"></script>
+    <script src="src/config.js"></script>
+    <script src="src/data/Weapons.js"></script>
+    <script src="src/data/Storage.js"></script>
+    <script src="src/entities/Player.js"></script>
+    <script src="src/entities/BulletPattern.js"></script>
+    <script src="src/entities/Boss.js"></script>
+    <script src="src/data/DummyBoss.js"></script>
+    <script src="src/scenes/BootScene.js"></script>
+    <script src="src/scenes/TutorialScene.js"></script>
+    <script src="src/scenes/LoadoutScene.js"></script>
+    <script src="src/scenes/GameScene.js"></script>
+    <script src="src/scenes/RewardScene.js"></script>
+    <script src="src/main.js"></script>
+</body>
+</html>
