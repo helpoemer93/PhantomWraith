@@ -37,19 +37,55 @@ class BulletPattern {
 
     fire() {
         const count = this.spec.count ?? 1;
-        const startAngleDeg = (this.spec.startAngleDeg ?? 90) + this.baseAngleOffset;
         const angleSpreadDeg = this.spec.angleSpreadDeg ?? 0;
         const speed = this.spec.speed ?? 150;
 
         const originX = this.boss.sprite.x;
         const originY = this.boss.sprite.y;
 
+        let baseStartAngleDeg = this.spec.startAngleDeg ?? 90;
+        if (this.spec.aimAtActivePlayer && this.scene.getActivePlayerPos) {
+            const target = this.scene.getActivePlayerPos();
+            if (target) {
+                baseStartAngleDeg = Phaser.Math.RadToDeg(
+                    Math.atan2(target.y - originY, target.x - originX),
+                );
+            }
+        }
+        const startAngleDeg = baseStartAngleDeg + this.baseAngleOffset;
+
+        const useSide = this.spec.dynamicSideDirection && this.spec.sideSpeed;
+        const sideDir = useSide ? (this.boss.sideDirection ?? 1) : 0;
+
         for (let i = 0; i < count; i += 1) {
             const angleDeg = startAngleDeg + i * angleSpreadDeg;
             const rad = Phaser.Math.DegToRad(angleDeg);
             const vx = Math.cos(rad) * speed;
             const vy = Math.sin(rad) * speed;
-            this.scene.spawnBossBullet(originX, originY, vx, vy);
+
+            let sprite;
+            if (this.spec.shape === 'triangle') {
+                sprite = this.scene.spawnBossTriangle(originX, originY, vx, vy, angleDeg, this.spec);
+            } else if (this.spec.shape === 'blade') {
+                sprite = this.scene.spawnBladeMissile(originX, originY, vx, vy, angleDeg, this.spec);
+            } else if (this.spec.shape === 'orbCarrier') {
+                sprite = this.scene.spawnOrbCarrier(originX, originY, angleDeg, this.spec);
+            } else if (this.spec.shape === 'snowflake') {
+                if (this.spec.snowflake) {
+                    sprite = this.scene.spawnSnowflake(originX, originY, vx, vy, angleDeg, this.spec.snowflake);
+                } else {
+                    sprite = this.scene.spawnPlainSnowflake(originX, originY, vx, vy, this.spec);
+                }
+            } else {
+                sprite = this.scene.spawnBossBullet(originX, originY, vx, vy);
+            }
+
+            if (useSide && sprite) {
+                sprite.hasSideMotion = true;
+                sprite.forwardSpeed = speed;
+                sprite.sideSpeed = this.spec.sideSpeed;
+                sprite.sideDirectionValue = sideDir;
+            }
         }
 
         this.baseAngleOffset += this.spec.rotationPerShotDeg ?? 0;

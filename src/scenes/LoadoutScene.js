@@ -7,7 +7,7 @@ class LoadoutScene extends Phaser.Scene {
         this.cameras.main.setBackgroundColor('#1a1a3a');
         this.centerX = GameConfig.GAME_WIDTH / 2;
 
-        this.inv = this.registry.get('inventory') || [];
+        this.weaponLevels = this.registry.get('weaponLevels') || {};
         const raw = this.registry.get('loadout');
         this.loadout = raw
             ? { p1: raw.p1.slice(), p2: raw.p2.slice() }
@@ -20,28 +20,34 @@ class LoadoutScene extends Phaser.Scene {
         }).setOrigin(0.5);
 
         this.add.text(20, 80, '1P', {
-            fontSize: '14px', color: '#4488ff',
-        });
-        this.p1SlotUI = this.buildSlotRow(115);
-
-        this.add.text(20, 165, '2P', {
             fontSize: '14px', color: '#ff4466',
         });
-        this.p2SlotUI = this.buildSlotRow(200);
+        this.p1SlotUI = this.buildSlotRow(115, 'p1');
 
-        this.invHeader = this.add.text(this.centerX, 250, '', {
-            fontSize: '14px', color: '#aaaacc',
-        }).setOrigin(0.5);
+        this.add.text(20, 165, '2P', {
+            fontSize: '14px', color: '#4488ff',
+        });
+        this.p2SlotUI = this.buildSlotRow(200, 'p2');
 
-        this.invItemUI = [];
-        this.buildInventoryUI();
+        this.add.text(20, 245, '무기 (캐릭터별 중복 불가, p1·p2 서로는 가능)', {
+            fontSize: '12px', color: '#88ffcc',
+        });
 
-        this.add.text(this.centerX, GameConfig.GAME_HEIGHT - 74,
-            '↑↓ 또는 W/S: 무기 선택\n← 1P 장착   → 2P 장착   Backspace: 해제',
-            { fontSize: '11px', color: '#8888aa', align: 'center', lineSpacing: 4 }
+        this.cardUI = [];
+        this.buildCardUI();
+
+        const previewW = 240;
+        const previewH = 130;
+        const previewX = (GameConfig.GAME_WIDTH - previewW) / 2;
+        const previewY = 490;
+        this.preview = new WeaponPreview(this, previewX, previewY, previewW, previewH);
+
+        this.add.text(this.centerX, GameConfig.GAME_HEIGHT - 60,
+            '↑↓/W·S: 무기 선택   ← 1P 장착   → 2P 장착   Backspace: 해제',
+            { fontSize: '10px', color: '#8888aa', align: 'center', lineSpacing: 4 }
         ).setOrigin(0.5);
         this.add.text(this.centerX, GameConfig.GAME_HEIGHT - 28,
-            'Space: 게임 시작   ESC: 메뉴로',
+            'Space: 게임 시작   ESC: 보스 선택으로',
             { fontSize: '12px', color: '#ffee88', align: 'center' }
         ).setOrigin(0.5);
 
@@ -59,7 +65,7 @@ class LoadoutScene extends Phaser.Scene {
         this.refresh();
     }
 
-    buildSlotRow(y) {
+    buildSlotRow(y, char) {
         const slotW = 100;
         const slotH = 58;
         const gap = 10;
@@ -74,138 +80,198 @@ class LoadoutScene extends Phaser.Scene {
             const text = this.add.text(x, y + 12, '---', {
                 fontSize: '11px', color: '#aaaacc',
             }).setOrigin(0.5);
+            bg.setInteractive({ useHandCursor: true });
+            bg.on('pointerdown', () => this.onSlotClick(char, i));
+            bg.on('pointerover', () => bg.setStrokeStyle(2, 0x88ccff));
+            bg.on('pointerout', () => bg.setStrokeStyle(1, 0x555577));
             ui.push({ bg, swatch, text });
         }
         return ui;
     }
 
-    buildInventoryUI() {
-        const rowH = 26;
-        const startY = 278;
+    buildCardUI() {
+        const rowH = 24;
+        const startY = 268;
         const listW = GameConfig.GAME_WIDTH - 30;
 
-        if (this.inv.length === 0) {
-            this.emptyText = this.add.text(
-                this.centerX, startY + 20,
-                '(창고 비어있음 — 보스를 처치해 무기를 획득하세요)',
-                { fontSize: '11px', color: '#666677' }
-            ).setOrigin(0.5);
-            return;
-        }
-
-        for (let i = 0; i < this.inv.length; i += 1) {
-            const wid = this.inv[i];
-            const w = Weapons[wid];
+        for (let i = 0; i < BASIC_WEAPON_IDS.length; i += 1) {
+            const wid = BASIC_WEAPON_IDS[i];
+            const lv = this.weaponLevels[wid] ?? 0;
+            const w = getWeapon(wid, lv);
+            if (!w) continue;
             const y = startY + i * rowH;
             const bg = this.add.rectangle(this.centerX, y, listW, rowH - 3, 0x222233);
-            const swatch = this.add.rectangle(25, y, 14, 14, w.color);
+            const swatch = this.add.rectangle(25, y, 12, 12, w.color);
             const nameText = this.add.text(45, y, w.name, {
-                fontSize: '13px', color: '#ffffff',
+                fontSize: '12px', color: '#ffffff',
             }).setOrigin(0, 0.5);
             const posText = this.add.text(GameConfig.GAME_WIDTH - 20, y, '', {
-                fontSize: '11px', color: '#aaaacc',
+                fontSize: '10px', color: '#aaaacc',
             }).setOrigin(1, 0.5);
-            this.invItemUI.push({ bg, swatch, nameText, posText });
+            bg.setInteractive({ useHandCursor: true });
+            const cardIdx = i;
+            bg.on('pointerdown', () => this.onCardClick(cardIdx));
+            this.cardUI.push({ bg, swatch, nameText, posText, wid });
         }
     }
 
-    findLoadoutPos(invIdx) {
-        for (let i = 0; i < this.loadout.p1.length; i += 1) {
-            if (this.loadout.p1[i] === invIdx) return { char: 'p1', slot: i };
+    findEquippedPositions(wid) {
+        const positions = [];
+        for (const char of ['p1', 'p2']) {
+            const arr = this.loadout[char];
+            for (let i = 0; i < arr.length; i += 1) {
+                if (arr[i] === wid) positions.push({ char, slot: i });
+            }
         }
-        for (let i = 0; i < this.loadout.p2.length; i += 1) {
-            if (this.loadout.p2[i] === invIdx) return { char: 'p2', slot: i };
-        }
-        return null;
+        return positions;
     }
 
-    removeFromLoadout(invIdx) {
-        for (let i = 0; i < this.loadout.p1.length; i += 1) {
-            if (this.loadout.p1[i] === invIdx) this.loadout.p1[i] = null;
-        }
-        for (let i = 0; i < this.loadout.p2.length; i += 1) {
-            if (this.loadout.p2[i] === invIdx) this.loadout.p2[i] = null;
-        }
-    }
-
-    placeTo(invIdx, char) {
-        this.removeFromLoadout(invIdx);
+    placeTo(wid, char) {
         const arr = this.loadout[char];
+        if (arr.includes(wid)) return false;
         for (let i = 0; i < arr.length; i += 1) {
             if (arr[i] == null) {
-                arr[i] = invIdx;
+                arr[i] = wid;
                 return true;
             }
         }
         return false;
     }
 
-    update() {
+    placeToSpecificSlot(wid, char, slotIndex) {
+        const arr = this.loadout[char];
+        if (arr[slotIndex] === wid) return false;
+        for (let i = 0; i < arr.length; i += 1) {
+            if (i !== slotIndex && arr[i] === wid) return false;
+        }
+        arr[slotIndex] = wid;
+        return true;
+    }
+
+    unequipSlot(char, slotIndex) {
+        const arr = this.loadout[char];
+        if (!arr[slotIndex]) return false;
+        arr[slotIndex] = null;
+        return true;
+    }
+
+    onSlotClick(char, slotIndex) {
+        const arr = this.loadout[char];
+        if (arr[slotIndex]) {
+            this.unequipSlot(char, slotIndex);
+        } else {
+            const wid = BASIC_WEAPON_IDS[this.cursorIndex];
+            this.placeToSpecificSlot(wid, char, slotIndex);
+        }
+        this.refresh();
+    }
+
+    onCardClick(cardIndex) {
+        if (cardIndex < 0 || cardIndex >= BASIC_WEAPON_IDS.length) return;
+        this.cursorIndex = cardIndex;
+        this.refresh();
+    }
+
+    removeCard(wid) {
+        let removed = false;
+        for (const char of ['p1', 'p2']) {
+            const arr = this.loadout[char];
+            for (let i = 0; i < arr.length; i += 1) {
+                if (arr[i] === wid) {
+                    arr[i] = null;
+                    removed = true;
+                }
+            }
+        }
+        return removed;
+    }
+
+    persistAndExit(sceneKey) {
+        this.registry.set('loadout', this.loadout);
+        const bossProgress = this.registry.get('bossProgress') || {};
+        Storage.save(this.weaponLevels, this.loadout, bossProgress);
+        this.scene.start(sceneKey);
+    }
+
+    update(time, delta) {
+        if (this.preview) this.preview.update(time, delta);
         const JD = Phaser.Input.Keyboard.JustDown;
         if (JD(this.keyMenu)) {
-            this.registry.set('loadout', this.loadout);
-            Storage.save(this.inv, this.loadout);
-            this.scene.start('BootScene');
+            this.persistAndExit('BossSelectScene');
             return;
         }
         if (JD(this.keyStart)) {
-            this.registry.set('loadout', this.loadout);
-            Storage.save(this.inv, this.loadout);
-            this.scene.start('GameScene');
+            this.persistAndExit('GameScene');
             return;
         }
 
-        if (this.inv.length === 0) return;
+        if (BASIC_WEAPON_IDS.length === 0) return;
 
         if (JD(this.keyUp1) || JD(this.keyUp2)) {
-            this.cursorIndex = (this.cursorIndex - 1 + this.inv.length) % this.inv.length;
+            this.cursorIndex = (this.cursorIndex - 1 + BASIC_WEAPON_IDS.length) % BASIC_WEAPON_IDS.length;
             this.refresh();
         } else if (JD(this.keyDown1) || JD(this.keyDown2)) {
-            this.cursorIndex = (this.cursorIndex + 1) % this.inv.length;
+            this.cursorIndex = (this.cursorIndex + 1) % BASIC_WEAPON_IDS.length;
             this.refresh();
         } else if (JD(this.keyLeft)) {
-            this.placeTo(this.cursorIndex, 'p1');
+            this.placeTo(BASIC_WEAPON_IDS[this.cursorIndex], 'p1');
             this.refresh();
         } else if (JD(this.keyRight)) {
-            this.placeTo(this.cursorIndex, 'p2');
+            this.placeTo(BASIC_WEAPON_IDS[this.cursorIndex], 'p2');
             this.refresh();
         } else if (JD(this.keyRemove)) {
-            this.removeFromLoadout(this.cursorIndex);
+            this.removeCard(BASIC_WEAPON_IDS[this.cursorIndex]);
             this.refresh();
         }
     }
 
     refresh() {
-        this.invHeader.setText(
-            this.inv.length === 0 ? '창고: 비어있음' : `창고 (${this.inv.length}개)`
-        );
-
         for (let i = 0; i < 4; i += 1) {
             this.updateSlotUI(this.p1SlotUI[i], this.loadout.p1[i]);
             this.updateSlotUI(this.p2SlotUI[i], this.loadout.p2[i]);
         }
 
-        for (let i = 0; i < this.invItemUI.length; i += 1) {
-            const u = this.invItemUI[i];
+        if (this.preview) {
+            const wid = BASIC_WEAPON_IDS[this.cursorIndex];
+            this.preview.setWeapon(wid, this.weaponLevels[wid] ?? 0);
+        }
+
+        for (let i = 0; i < this.cardUI.length; i += 1) {
+            const u = this.cardUI[i];
             const selected = i === this.cursorIndex;
             u.bg.setFillStyle(selected ? 0x334455 : 0x222233);
             u.bg.setStrokeStyle(selected ? 2 : 0, 0xffee00);
-            const pos = this.findLoadoutPos(i);
-            u.posText.setText(pos ? `${pos.char.toUpperCase()} #${pos.slot + 1}` : '—');
-            u.posText.setColor(pos ? '#88ffcc' : '#555566');
+
+            const positions = this.findEquippedPositions(u.wid);
+            if (positions.length > 0) {
+                const label = positions
+                    .map((p) => `${p.char.toUpperCase()} #${p.slot + 1}`)
+                    .join(', ');
+                u.posText.setText(label);
+                u.posText.setColor('#88ffcc');
+            } else {
+                u.posText.setText('—');
+                u.posText.setColor('#555566');
+            }
         }
     }
 
-    updateSlotUI(ui, invIdx) {
-        if (invIdx == null || invIdx >= this.inv.length) {
+    updateSlotUI(ui, wid) {
+        if (!wid) {
             ui.bg.setFillStyle(0x333344);
             ui.swatch.setFillStyle(0x000000);
             ui.text.setText('---');
             ui.text.setColor('#666677');
             return;
         }
-        const wid = this.inv[invIdx];
-        const w = Weapons[wid];
+        const w = getWeapon(wid, this.weaponLevels[wid] ?? 0);
+        if (!w) {
+            ui.bg.setFillStyle(0x333344);
+            ui.swatch.setFillStyle(0x000000);
+            ui.text.setText('?');
+            ui.text.setColor('#ff6666');
+            return;
+        }
         ui.bg.setFillStyle(0x334455);
         ui.swatch.setFillStyle(w.color);
         ui.text.setText(w.name);

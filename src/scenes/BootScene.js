@@ -6,20 +6,18 @@ class BootScene extends Phaser.Scene {
     create() {
         this.cameras.main.setBackgroundColor('#1a1a2e');
 
-        if (!this.registry.get('inventory')) {
+        if (!this.registry.get('loadout')) {
             const saved = Storage.load();
             if (saved) {
-                this.registry.set('inventory', saved.inventory);
+                this.registry.set('weaponLevels', saved.weaponLevels);
                 this.registry.set('loadout', saved.loadout);
+                this.registry.set('bossProgress', saved.bossProgress);
             } else {
-                const inventory = ['basicLinear', 'basicLinear'];
-                const loadout = {
-                    p1: [0, null, null, null],
-                    p2: [1, null, null, null],
-                };
-                this.registry.set('inventory', inventory);
-                this.registry.set('loadout', loadout);
-                Storage.save(inventory, loadout);
+                const init = makeInitialSaveData();
+                this.registry.set('weaponLevels', init.weaponLevels);
+                this.registry.set('loadout', init.loadout);
+                this.registry.set('bossProgress', init.bossProgress);
+                Storage.save(init.weaponLevels, init.loadout, init.bossProgress);
             }
         }
 
@@ -35,20 +33,34 @@ class BootScene extends Phaser.Scene {
             color: '#8888aa',
         }).setOrigin(0.5);
 
-        const inv = this.registry.get('inventory') || [];
-        const invLabel = inv.length === 0
-            ? '창고: 비어있음'
-            : `창고: ${inv.length}개 (${inv.map((id) => Weapons[id]?.name ?? id).join(', ')})`;
-        this.add.text(centerX, 290, invLabel, {
+        const weaponLevels = this.registry.get('weaponLevels') || {};
+        const weaponLabel = BASIC_WEAPON_IDS
+            .map((id) => `${Weapons[id]?.name ?? id} Lv${weaponLevels[id] ?? 0}`)
+            .join('  ·  ');
+        this.add.text(centerX, 290, weaponLabel, {
             fontSize: '11px',
             color: '#7788aa',
             align: 'center',
             wordWrap: { width: GameConfig.GAME_WIDTH - 40 },
         }).setOrigin(0.5);
 
+        const bossProgress = this.registry.get('bossProgress') || {};
+        const progressLines = Stages.map((b) => {
+            const lv = bossProgress[b.id] ?? 0;
+            const label = lv === 0 ? '미클리어' : `최고 Lv${lv} 클리어`;
+            return `${b.name}: ${label}`;
+        }).join('\n');
+        this.add.text(centerX, 330, progressLines, {
+            fontSize: '11px',
+            color: '#88ccff',
+            align: 'center',
+            lineSpacing: 4,
+        }).setOrigin(0.5);
+
         this.items = [
-            { label: '게임 시작', scene: 'LoadoutScene' },
+            { label: '게임 시작', scene: 'BossSelectScene' },
             { label: '조작 실습 (튜토리얼)', scene: 'TutorialScene' },
+            { label: '패턴 실험실', scene: 'PatternLabScene' },
         ];
         this.selectedIndex = 0;
 

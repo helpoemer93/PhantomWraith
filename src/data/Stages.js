@@ -1,0 +1,4 @@
+const Stages = [
+    Gugu,
+    IceBoss,
+];

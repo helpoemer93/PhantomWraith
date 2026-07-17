@@ -17,8 +17,6 @@ class TutorialScene extends Phaser.Scene {
         this.nextKey = this.input.keyboard.addKey(KC.ENTER);
         this.escKey = this.input.keyboard.addKey(KC.ESC);
 
-        this.swapStack = GameConfig.SWAP_MAX_STACK;
-        this.lastSwapChargeTime = 0;
 
         this.playerBullets = this.physics.add.group();
         this.enemyBullets = this.physics.add.group();
@@ -88,7 +86,7 @@ class TutorialScene extends Phaser.Scene {
         } else if (this.step === 1) {
             this.stepTitle.setText('[2/3] 스왑 연습');
             this.stepDetail.setText(
-                'Space를 누르면 두 캐릭터의 무적 상태(노란 테두리)가 서로 바뀝니다.\n최대 3스택, 5초에 1충전.\n\n스왑을 3번 성공하면 다음 단계.'
+                'Space를 누르면 두 캐릭터의 무적 상태(노란 테두리)가 서로 바뀝니다.\n쿨타임 없이 언제든 사용 가능.\n\n스왑을 3번 성공하면 다음 단계.'
             );
             this.updateSwapProgress();
         } else if (this.step === 2) {
@@ -124,17 +122,8 @@ class TutorialScene extends Phaser.Scene {
         this.player1.update(time);
         this.player2.update(time);
 
-        if (Phaser.Input.Keyboard.JustDown(this.swapKey) && this.swapStack > 0) {
+        if (Phaser.Input.Keyboard.JustDown(this.swapKey)) {
             this.doSwap();
-        }
-
-        if (this.swapStack < GameConfig.SWAP_MAX_STACK) {
-            if (time - this.lastSwapChargeTime >= GameConfig.SWAP_CHARGE_INTERVAL_MS) {
-                this.swapStack += 1;
-                this.lastSwapChargeTime = time;
-            }
-        } else {
-            this.lastSwapChargeTime = time;
         }
 
         if (this.step === 0) {
@@ -162,8 +151,6 @@ class TutorialScene extends Phaser.Scene {
         const p1Was = this.player1.isInvincible;
         this.player1.setInvincible(this.player2.isInvincible);
         this.player2.setInvincible(p1Was);
-        this.swapStack -= 1;
-        this.lastSwapChargeTime = this.time.now;
 
         if (this.step === 1) {
             this.swapSuccessCount += 1;

@@ -14,6 +14,7 @@ const DummyBoss = {
             hpEnter: 200,
             patterns: [
                 {
+                    name: 'p1_fan12',
                     count: 12,
                     startAngleDeg: 90,
                     angleSpreadDeg: 30,
@@ -27,6 +28,7 @@ const DummyBoss = {
             hpEnter: 133,
             patterns: [
                 {
+                    name: 'p2_fan8',
                     count: 8,
                     startAngleDeg: 90,
                     angleSpreadDeg: 45,
@@ -35,6 +37,7 @@ const DummyBoss = {
                     rotationPerShotDeg: 20,
                 },
                 {
+                    name: 'p2_snipe',
                     count: 1,
                     startAngleDeg: 90,
                     angleSpreadDeg: 0,
@@ -48,6 +51,7 @@ const DummyBoss = {
             hpEnter: 66,
             patterns: [
                 {
+                    name: 'p3_fan16',
                     count: 16,
                     startAngleDeg: 90,
                     angleSpreadDeg: 22.5,

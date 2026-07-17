@@ -1,8 +1,9 @@
 class Player {
-    constructor(scene, x, y, keys, color, startInvincible, initialSlots) {
+    constructor(scene, x, y, keys, color, startInvincible, initialSlots, weaponLevels) {
         this.scene = scene;
         this.keys = keys;
         this.color = color;
+        this.weaponLevels = weaponLevels || {};
 
         this.isInvincible = startInvincible;
         this.hitImmunityUntil = 0;
@@ -29,14 +30,17 @@ class Player {
 
         if (initialSlots) {
             for (let i = 0; i < initialSlots.length && i < this.slots.length; i += 1) {
-                this.slots[i] = initialSlots[i] ? Weapons[initialSlots[i]] : null;
+                const wid = initialSlots[i];
+                this.slots[i] = wid ? getWeapon(wid, this.weaponLevels[wid] ?? 0) : null;
             }
         }
         this.rebuildOrbits();
     }
 
     equipSlot(slotIndex, weaponId) {
-        this.slots[slotIndex] = weaponId ? Weapons[weaponId] : null;
+        this.slots[slotIndex] = weaponId
+            ? getWeapon(weaponId, this.weaponLevels[weaponId] ?? 0)
+            : null;
         this.lastFireTime[slotIndex] = 0;
         this.rebuildOrbits();
     }
@@ -49,18 +53,26 @@ class Player {
         this.orbitOrbs = [];
 
         const orbitSlots = this.slots.filter((w) => w && w.type === 'orbit');
-        for (let i = 0; i < orbitSlots.length; i += 1) {
-            const w = orbitSlots[i];
-            const orb = this.scene.add.circle(this.sprite.x, this.sprite.y, w.orbSize, w.color);
-            this.scene.physics.add.existing(orb);
-            orb.body.setCircle(w.orbSize);
-            orb.body.setAllowGravity(false);
-            orb.weaponSpec = w;
-            orb.phaseOffset = (i / orbitSlots.length) * Math.PI * 2;
-            orb.owner = this;
-            orb.lastHitTargetTime = 0;
-            this.orbitOrbs.push(orb);
-            if (this.scene.orbitOrbs) this.scene.orbitOrbs.add(orb);
+        let totalOrbs = 0;
+        for (const w of orbitSlots) totalOrbs += (w.orbCount ?? 1);
+        if (totalOrbs === 0) return;
+
+        let orbIndex = 0;
+        for (const w of orbitSlots) {
+            const count = w.orbCount ?? 1;
+            for (let j = 0; j < count; j += 1) {
+                const orb = this.scene.add.circle(this.sprite.x, this.sprite.y, w.orbSize, w.color);
+                this.scene.physics.add.existing(orb);
+                orb.body.setCircle(w.orbSize);
+                orb.body.setAllowGravity(false);
+                orb.weaponSpec = w;
+                orb.phaseOffset = (orbIndex / totalOrbs) * Math.PI * 2;
+                orb.owner = this;
+                orb.lastHitTargetTime = 0;
+                this.orbitOrbs.push(orb);
+                if (this.scene.orbitOrbs) this.scene.orbitOrbs.add(orb);
+                orbIndex += 1;
+            }
         }
     }
 

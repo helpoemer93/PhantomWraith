@@ -1,21 +1,25 @@
 const Storage = {
-    KEY: 'pw_save_v1',
+    KEY: 'pw_save_v4',
 
     load() {
         try {
             const raw = localStorage.getItem(this.KEY);
             if (!raw) return null;
             const data = JSON.parse(raw);
-            if (!data || !Array.isArray(data.inventory) || !data.loadout) return null;
+            if (!data || !data.weaponLevels || !data.loadout || !data.bossProgress) return null;
             return data;
         } catch (e) {
             return null;
         }
     },
 
-    save(inventory, loadout) {
+    save(weaponLevels, loadout, bossProgress) {
         try {
-            localStorage.setItem(this.KEY, JSON.stringify({ inventory, loadout }));
+            localStorage.setItem(this.KEY, JSON.stringify({
+                weaponLevels,
+                loadout,
+                bossProgress,
+            }));
         } catch (e) {
             // 저장 실패는 무시 (용량 초과 등)
         }
@@ -29,3 +33,16 @@ const Storage = {
         }
     },
 };
+
+function makeInitialSaveData() {
+    const weaponLevels = {};
+    for (const id of BASIC_WEAPON_IDS) weaponLevels[id] = 0;
+    return {
+        weaponLevels,
+        loadout: {
+            p1: ['basicLinear', null, null, null],
+            p2: ['basicLinear', null, null, null],
+        },
+        bossProgress: {},
+    };
+}
