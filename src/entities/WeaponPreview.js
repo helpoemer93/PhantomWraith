@@ -27,7 +27,7 @@ class WeaponPreview {
         this.scarecrowHalfH = scarecrowSize / 2;
 
         const playerSize = 18;
-        this.playerY = y + height - 24;
+        this.playerY = y + height - 78;
         this.playerCenterX = x + width / 2;
         this.playerRange = width / 2 - 30;
         this.player = scene.add.rectangle(
@@ -100,7 +100,7 @@ class WeaponPreview {
 
         for (const orb of this.orbs) {
             const angle = orb.phaseOffset + (time / 1000) * w.rotationSpeedRadPerSec;
-            const radius = Math.min(w.radius, 32);
+            const radius = Math.min(w.radius, 66);
             orb.x = this.player.x + Math.cos(angle) * radius;
             orb.y = this.player.y + Math.sin(angle) * radius;
         }

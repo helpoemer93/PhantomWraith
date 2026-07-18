@@ -26,6 +26,12 @@ class GameScene extends Phaser.Scene {
         this.bossBullets = this.physics.add.group();
         this.orbitOrbs = this.physics.add.group();
         this.snowflakesGroup = this.physics.add.group();
+        this.turretsGroup = this.physics.add.group();
+        this.turretSpawnerSpec = null;
+        this.turretSpawnLastTime = 0;
+        this.suicideDronesGroup = this.physics.add.group();
+        this.suicideDroneSpawnerSpec = null;
+        this.suicideDroneSpawnLastTime = null;
         this.birdEmitterSpec = null;
         this.birdEmitters = [];
         this.birdActivateLastTime = 0;
@@ -86,6 +92,30 @@ class GameScene extends Phaser.Scene {
         this.physics.add.overlap(
             this.boss.sprite, this.orbitOrbs,
             (bossSprite, orb) => this.onBossOrbitHit(orb)
+        );
+        this.physics.add.overlap(
+            this.turretsGroup, this.playerBullets,
+            (t, b) => this.onTurretHit(t, b)
+        );
+        this.physics.add.overlap(
+            this.turretsGroup, this.orbitOrbs,
+            (t, o) => this.onTurretOrbitHit(t, o)
+        );
+        this.physics.add.overlap(
+            this.player1.sprite, this.suicideDronesGroup,
+            (p, d) => this.onDroneHitPlayer(this.player1, d)
+        );
+        this.physics.add.overlap(
+            this.player2.sprite, this.suicideDronesGroup,
+            (p, d) => this.onDroneHitPlayer(this.player2, d)
+        );
+        this.physics.add.overlap(
+            this.suicideDronesGroup, this.playerBullets,
+            (d, b) => this.onDroneShot(d, b)
+        );
+        this.physics.add.overlap(
+            this.suicideDronesGroup, this.orbitOrbs,
+            (d, o) => this.onDroneOrbitHit(d, o)
         );
 
         this.uiLives = this.add.text(10, 10, '', {
@@ -163,6 +193,11 @@ class GameScene extends Phaser.Scene {
         this.updateHomingBullets(delta);
         this.updateSeekingMissiles(delta);
         this.updateEndpointDecelSpiral();
+        this.updateTurretSpawner(time);
+        this.updateTurrets(time, delta);
+        this.updateGears(delta);
+        this.updateSuicideDroneSpawner(time);
+        this.updateSuicideDrones(time, delta);
 
         this.playerBullets.children.each((b) => {
             if (!b) return;
@@ -970,6 +1005,17 @@ class GameScene extends Phaser.Scene {
             this.spawnBirdEmitters(inter.spec);
             return;
         }
+        if (inter.spec.type === 'electricField') {
+            this.spawnElectricField(inter.spec.field);
+            const count = inter.spec.turretsToSpawn ?? 3;
+            for (let i = 0; i < count; i += 1) {
+                if (this.turretSpawnerSpec) this.spawnTurretRandom(this.turretSpawnerSpec);
+            }
+            this.currentInterlude = inter;
+            this.interludeStartTime = this.time.now;
+            this.interludeFrozen = false;
+            return;
+        }
         this.currentInterlude = inter;
         this.interludeStartTime = this.time.now;
         this.interludeFrozen = false;
@@ -985,8 +1031,15 @@ class GameScene extends Phaser.Scene {
         const spec = this.currentInterlude.spec;
         const elapsed = time - this.interludeStartTime;
 
-        if (elapsed >= (spec.freezeAtMs ?? 3000)) {
-            this.freezeAllSnowflakes(spec);
+        if (spec.freezeAtMs !== undefined) {
+            if (elapsed >= spec.freezeAtMs) {
+                this.freezeAllSnowflakes(spec);
+                this.currentInterlude = null;
+                this.interludeFrozen = false;
+            }
+            return;
+        }
+        if (spec.durationMs !== undefined && elapsed >= spec.durationMs) {
             this.currentInterlude = null;
             this.interludeFrozen = false;
         }
@@ -1025,7 +1078,7 @@ class GameScene extends Phaser.Scene {
         const time = this.time.now;
         if (!player.canBeHit(time)) return;
         player.onHit(time);
-        bullet.destroy();
+        if (!bullet.isGear && !bullet.isElectricField) bullet.destroy();
         this.lives -= 1;
         this.updateUI();
         if (this.lives <= 0) {
@@ -1062,6 +1115,10 @@ class GameScene extends Phaser.Scene {
         this.player2.sprite.body.setVelocity(0, 0);
         this.bossBullets.children.each((b) => b && b.destroy());
         this.snowflakesGroup.children.each((s) => s && s.destroy());
+        this.turretsGroup.children.each((t) => t && t.destroy());
+        this.turretSpawnerSpec = null;
+        this.suicideDronesGroup.children.each((d) => d && d.destroy());
+        this.suicideDroneSpawnerSpec = null;
         this.despawnBirdEmitters();
         this.despawnClouds();
         this.boss.destroy();
@@ -1110,5 +1167,516 @@ class GameScene extends Phaser.Scene {
         const ratio = this.boss.hp / this.boss.maxHp;
         const fullWidth = GameConfig.GAME_WIDTH - 40;
         this.uiHpBar.width = Math.max(0, fullWidth * ratio);
+    }
+
+    fireGearBurst(boss, cfg) {
+        const bx = boss.sprite.x;
+        const by = boss.sprite.y;
+        const targets = [];
+        const activePos = this.getActivePlayerPos();
+        if (activePos) targets.push(activePos);
+        this.turretsGroup.children.each((t) => {
+            if (t && t.active && t.hp > 0) targets.push({ x: t.x, y: t.y });
+        });
+        for (const t of targets) {
+            this.spawnGear(bx, by, t.x, t.y, cfg.gear);
+        }
+    }
+
+    spawnGear(originX, originY, targetX, targetY, gearSpec) {
+        const dx = targetX - originX;
+        const dy = targetY - originY;
+        const dist = Math.hypot(dx, dy) || 1;
+        const speed = gearSpec.speed ?? 200;
+        const vx = (dx / dist) * speed;
+        const vy = (dy / dist) * speed;
+        const radius = gearSpec.radius ?? 32;
+        const color = gearSpec.color ?? 0x888888;
+
+        const gear = this.add.circle(originX, originY, radius, color);
+        gear.setStrokeStyle(3, 0x555555);
+        this.physics.add.existing(gear);
+        this.bossBullets.add(gear);
+        gear.body.setCircle(radius);
+        gear.body.setVelocity(vx, vy);
+
+        const spoke1 = this.add.rectangle(originX, originY, radius * 2 - 6, 5, 0x555555);
+        const spoke2 = this.add.rectangle(originX, originY, 5, radius * 2 - 6, 0x555555);
+        const inner = this.add.circle(originX, originY, radius * 0.35, 0x333333);
+
+        gear.isGear = true;
+        gear.gearState = 'initial';
+        gear.gearSpeed = speed;
+        gear.gearRotSpeed = gearSpec.rotationRadPerSec ?? Math.PI;
+        gear.gearRotAngle = 0;
+        gear.gearRadius = radius;
+        gear.wallSide = null;
+        gear.spoke1 = spoke1;
+        gear.spoke2 = spoke2;
+        gear.inner = inner;
+
+        gear.once('destroy', () => {
+            if (spoke1 && spoke1.active) spoke1.destroy();
+            if (spoke2 && spoke2.active) spoke2.destroy();
+            if (inner && inner.active) inner.destroy();
+        });
+
+        return gear;
+    }
+
+    updateGears(delta) {
+        const dtSec = delta / 1000;
+        const W = GameConfig.GAME_WIDTH;
+        const H = GameConfig.GAME_HEIGHT;
+        this.bossBullets.children.each((g) => {
+            if (!g || !g.isGear || !g.body) return;
+
+            if (g.gearState === 'initial') {
+                if (g.y <= 0) {
+                    g.destroy();
+                    return;
+                }
+                if (g.x <= 0) {
+                    g.x = 0;
+                    g.gearState = 'goingDown';
+                    g.wallSide = 'left';
+                    g.body.setVelocity(0, g.gearSpeed);
+                } else if (g.x >= W) {
+                    g.x = W;
+                    g.gearState = 'goingDown';
+                    g.wallSide = 'right';
+                    g.body.setVelocity(0, g.gearSpeed);
+                } else if (g.y >= H) {
+                    g.y = H;
+                    if (g.x < W / 2) {
+                        g.gearState = 'goingRight';
+                        g.body.setVelocity(g.gearSpeed, 0);
+                    } else {
+                        g.gearState = 'goingLeft';
+                        g.body.setVelocity(-g.gearSpeed, 0);
+                    }
+                }
+            } else if (g.gearState === 'goingDown') {
+                g.x = (g.wallSide === 'left') ? 0 : W;
+                if (g.y >= H) {
+                    g.y = H;
+                    if (g.wallSide === 'left') {
+                        g.gearState = 'goingRight';
+                        g.body.setVelocity(g.gearSpeed, 0);
+                    } else {
+                        g.gearState = 'goingLeft';
+                        g.body.setVelocity(-g.gearSpeed, 0);
+                    }
+                }
+            } else if (g.gearState === 'goingRight') {
+                g.y = H;
+                if (g.x >= W) {
+                    g.x = W;
+                    g.gearState = 'goingUp';
+                    g.wallSide = 'right';
+                    g.body.setVelocity(0, -g.gearSpeed);
+                }
+            } else if (g.gearState === 'goingLeft') {
+                g.y = H;
+                if (g.x <= 0) {
+                    g.x = 0;
+                    g.gearState = 'goingUp';
+                    g.wallSide = 'left';
+                    g.body.setVelocity(0, -g.gearSpeed);
+                }
+            } else if (g.gearState === 'goingUp') {
+                g.x = (g.wallSide === 'left') ? 0 : W;
+                if (g.y <= 0) {
+                    g.destroy();
+                    return;
+                }
+            }
+
+            g.gearRotAngle += g.gearRotSpeed * dtSec;
+            if (g.spoke1 && g.spoke1.active) {
+                g.spoke1.x = g.x; g.spoke1.y = g.y; g.spoke1.rotation = g.gearRotAngle;
+            }
+            if (g.spoke2 && g.spoke2.active) {
+                g.spoke2.x = g.x; g.spoke2.y = g.y; g.spoke2.rotation = g.gearRotAngle;
+            }
+            if (g.inner && g.inner.active) {
+                g.inner.x = g.x; g.inner.y = g.y;
+            }
+        });
+    }
+
+    startTurretSpawner(spec) {
+        this.turretSpawnerSpec = spec;
+        this.turretSpawnLastTime = null;
+    }
+
+    updateTurretSpawner(time) {
+        if (!this.turretSpawnerSpec) return;
+        if (this.turretSpawnLastTime === null) {
+            this.turretSpawnLastTime = time;
+            return;
+        }
+        const spec = this.turretSpawnerSpec;
+        const interval = spec.intervalMs ?? 5000;
+        if (time - this.turretSpawnLastTime >= interval) {
+            this.spawnTurretRandom(spec);
+            this.turretSpawnLastTime = time;
+        }
+    }
+
+    spawnTurretRandom(spec) {
+        const area = spec.area;
+        const turretSpec = spec.turret;
+        const minDist = (turretSpec.radius ?? 12) * 5;
+        let x = Phaser.Math.Between(area.xMin, area.xMax);
+        let y = Phaser.Math.Between(area.yMin, area.yMax);
+        for (let attempt = 0; attempt < 10; attempt += 1) {
+            let ok = true;
+            this.turretsGroup.children.each((t) => {
+                if (t && t.active && Math.hypot(t.x - x, t.y - y) < minDist) ok = false;
+            });
+            if (ok) break;
+            x = Phaser.Math.Between(area.xMin, area.xMax);
+            y = Phaser.Math.Between(area.yMin, area.yMax);
+        }
+        this.spawnTurret(x, y, turretSpec);
+    }
+
+    spawnTurret(x, y, turretSpec) {
+        const radius = turretSpec.radius ?? 12;
+        const t = this.add.circle(x, y, radius, turretSpec.color ?? 0x999999);
+        t.setStrokeStyle(2, turretSpec.strokeColor ?? 0x666666);
+        this.physics.add.existing(t);
+        this.turretsGroup.add(t);
+        t.body.setCircle(radius);
+        t.body.setImmovable(true);
+        t.hp = turretSpec.maxHp ?? 70;
+        t.maxHp = turretSpec.maxHp ?? 70;
+        t.decayPercentPerSec = turretSpec.decayPercentPerSec ?? 5;
+        t.fireIntervalMs = turretSpec.fireIntervalMs ?? 1000;
+        t.shotsPerBurst = turretSpec.shotsPerBurst ?? 3;
+        t.shotIntervalMs = turretSpec.shotIntervalMs ?? 200;
+        t.missileSpec = turretSpec.missile ?? { radius: 4, speed: 200, color: 0xff8844 };
+        t.lastCycleStart = this.time.now;
+        t.shotsFiredInCycle = t.shotsPerBurst;
+        t.cycleAngleLocked = false;
+        return t;
+    }
+
+    updateTurrets(time, delta) {
+        const dtSec = delta / 1000;
+        const turretCount = this.turretsGroup.countActive();
+        this.turretsGroup.children.each((t) => {
+            if (!t || !t.active || !t.body) return;
+
+            t.hp -= t.maxHp * (t.decayPercentPerSec / 100) * turretCount * dtSec;
+            if (t.hp <= 0) {
+                t.destroy();
+                return;
+            }
+            t.setAlpha(0.4 + 0.6 * (t.hp / t.maxHp));
+
+            if (time - t.lastCycleStart >= t.fireIntervalMs) {
+                t.lastCycleStart = time;
+                t.shotsFiredInCycle = 0;
+                t.cycleAngleLocked = false;
+            }
+            if (t.shotsFiredInCycle < t.shotsPerBurst) {
+                const nextShotAt = t.lastCycleStart + t.shotsFiredInCycle * t.shotIntervalMs;
+                if (time >= nextShotAt) {
+                    if (!t.cycleAngleLocked) {
+                        const target = this.getActivePlayerPos();
+                        if (target) {
+                            const dx = target.x - t.x;
+                            const dy = target.y - t.y;
+                            const dist = Math.hypot(dx, dy) || 1;
+                            t.cycleUx = dx / dist;
+                            t.cycleUy = dy / dist;
+                        } else {
+                            t.cycleUx = 0;
+                            t.cycleUy = 1;
+                        }
+                        t.cycleAngleLocked = true;
+                    }
+                    this.fireTurretMissile(t);
+                    t.shotsFiredInCycle += 1;
+                }
+            }
+        });
+    }
+
+    fireTurretMissile(turret) {
+        const spec = turret.missileSpec;
+        const speed = spec.speed ?? 200;
+        const vx = (turret.cycleUx ?? 0) * speed;
+        const vy = (turret.cycleUy ?? 1) * speed;
+        this.spawnColoredCircleBullet(
+            turret.x, turret.y, vx, vy,
+            spec.radius ?? 4, spec.color ?? 0xff8844
+        );
+    }
+
+    onTurretHit(turret, bullet) {
+        if (!turret.active || turret.hp <= 0) return;
+        if (bullet.pierce) {
+            const time = this.time.now;
+            const cd = bullet.contactCooldownMs ?? 0;
+            if (time - (bullet.lastHitTargetTime ?? -Infinity) < cd) return;
+            bullet.lastHitTargetTime = time;
+            turret.hp -= bullet.damage ?? 1;
+        } else {
+            turret.hp -= bullet.damage ?? 1;
+            bullet.destroy();
+        }
+        if (turret.hp <= 0) turret.destroy();
+    }
+
+    onTurretOrbitHit(turret, orb) {
+        if (!turret.active || turret.hp <= 0) return;
+        const time = this.time.now;
+        if (time - orb.lastHitTargetTime < orb.weaponSpec.contactCooldownMs) return;
+        orb.lastHitTargetTime = time;
+        turret.hp -= orb.weaponSpec.damage;
+        if (turret.hp <= 0) turret.destroy();
+    }
+
+    spawnElectricField(fieldSpec) {
+        const w = fieldSpec.width ?? GameConfig.GAME_WIDTH;
+        const h = fieldSpec.height ?? 22;
+        const y0 = fieldSpec.initialY ?? -20;
+        const field = this.add.rectangle(
+            GameConfig.GAME_WIDTH / 2, y0, w, h,
+            fieldSpec.color ?? 0x88ccff
+        );
+        field.setStrokeStyle(2, fieldSpec.strokeColor ?? 0xffffff);
+        this.physics.add.existing(field);
+        this.bossBullets.add(field);
+        field.body.setSize(w, h);
+        field.body.setVelocityY(fieldSpec.speed ?? 235);
+        field.isElectricField = true;
+    }
+
+    startSuicideDroneSpawner(spec) {
+        this.suicideDroneSpawnerSpec = spec;
+        this.suicideDroneSpawnLastTime = null;
+    }
+
+    updateSuicideDroneSpawner(time) {
+        if (!this.suicideDroneSpawnerSpec) return;
+        if (this.suicideDroneSpawnLastTime === null) {
+            this.suicideDroneSpawnLastTime = time;
+            return;
+        }
+        const spec = this.suicideDroneSpawnerSpec;
+        const interval = spec.intervalMs ?? 4000;
+        if (time - this.suicideDroneSpawnLastTime >= interval) {
+            this.spawnSuicideDrone(spec.drone);
+            this.suicideDroneSpawnLastTime = time;
+        }
+    }
+
+    spawnSuicideDrone(droneSpec) {
+        const cx = droneSpec.centerX ?? GameConfig.GAME_WIDTH / 2;
+        const cy = droneSpec.centerY ?? GameConfig.GAME_HEIGHT / 2;
+        const R = droneSpec.orbitRadius ?? 150;
+        const startX = (this.boss && this.boss.sprite) ? this.boss.sprite.x : cx;
+        const startY = (this.boss && this.boss.sprite) ? this.boss.sprite.y : cy - R;
+        const bx2c = startX - cx;
+        const by2c = startY - cy;
+        const bdist = Math.hypot(bx2c, by2c);
+        const initPhi = (bdist < 0.01) ? Math.random() * Math.PI * 2 : Math.atan2(by2c, bx2c);
+        const targetX = cx + Math.cos(initPhi) * R;
+        const targetY = cy + Math.sin(initPhi) * R;
+
+        const drone = this.add.circle(startX, startY, droneSpec.radius ?? 15, droneSpec.color ?? 0x666666);
+        drone.setStrokeStyle(2, droneSpec.strokeColor ?? 0x333333);
+        this.physics.add.existing(drone);
+        this.suicideDronesGroup.add(drone);
+        drone.body.setCircle(droneSpec.radius ?? 15);
+
+        const halfDeg = (droneSpec.detectionAngleDeg ?? 60) / 2;
+        const fan = this.add.arc(
+            startX, startY,
+            droneSpec.detectionRadius ?? 110,
+            -halfDeg, halfDeg, false,
+            droneSpec.fanColor ?? 0xff4444,
+            droneSpec.fanAlpha ?? 0.3
+        );
+
+        const dxA = targetX - startX;
+        const dyA = targetY - startY;
+        const distA = Math.hypot(dxA, dyA) || 1;
+        const approachSpeed = droneSpec.approachSpeed ?? 250;
+        drone.body.setVelocity((dxA / distA) * approachSpeed, (dyA / distA) * approachSpeed);
+
+        drone.spec = droneSpec;
+        drone.state = 'approaching';
+        drone.phi = initPhi;
+        drone.targetX = targetX;
+        drone.targetY = targetY;
+        drone.orbitCenterX = cx;
+        drone.orbitCenterY = cy;
+        drone.orbitRadius = R;
+        drone.orbitSpeed = droneSpec.orbitSpeedRadPerSec ?? Math.PI / 3;
+        drone.hp = droneSpec.maxHp ?? 20;
+        drone.maxHp = droneSpec.maxHp ?? 20;
+        drone.decayPercentPerSecPerDrone = droneSpec.decayPercentPerSecPerDrone ?? 5;
+        drone.detectionRadius = droneSpec.detectionRadius ?? 110;
+        drone.detectionHalfRad = Phaser.Math.DegToRad(halfDeg);
+        drone.pauseMs = droneSpec.pauseMs ?? 500;
+        drone.pauseUntil = 0;
+        drone.chargeSpeed = droneSpec.chargeSpeed ?? 500;
+        drone.chargeVx = 0;
+        drone.chargeVy = 0;
+        drone.fan = fan;
+
+        drone.once('destroy', () => {
+            if (fan && fan.active) fan.destroy();
+        });
+
+        return drone;
+    }
+
+    updateSuicideDrones(time, delta) {
+        const dtSec = delta / 1000;
+        const W = GameConfig.GAME_WIDTH;
+        const H = GameConfig.GAME_HEIGHT;
+        const droneCount = this.suicideDronesGroup.countActive();
+        this.suicideDronesGroup.children.each((d) => {
+            if (!d || !d.active || !d.body) return;
+
+            d.hp -= d.maxHp * (d.decayPercentPerSecPerDrone / 100) * droneCount * dtSec;
+            if (d.hp <= 0) {
+                d.destroy();
+                return;
+            }
+
+            if (d.state === 'approaching') {
+                const dx = d.targetX - d.x;
+                const dy = d.targetY - d.y;
+                if (Math.hypot(dx, dy) < 8) {
+                    d.x = d.targetX;
+                    d.y = d.targetY;
+                    d.body.setVelocity(0, 0);
+                    d.state = 'orbiting';
+                    return;
+                }
+                const moveAngle = Math.atan2(dy, dx);
+                d.fan.x = d.x;
+                d.fan.y = d.y;
+                d.fan.rotation = moveAngle;
+                d.fan.setFillStyle(d.spec.fanColor ?? 0xff4444, d.spec.fanAlpha ?? 0.3);
+                d.fan.setVisible(true);
+
+                const targets = [];
+                if (this.player1 && !this.player1.isInvincible) targets.push(this.player1);
+                if (this.player2 && !this.player2.isInvincible) targets.push(this.player2);
+                for (const p of targets) {
+                    const pdx = p.sprite.x - d.x;
+                    const pdy = p.sprite.y - d.y;
+                    const dist = Math.hypot(pdx, pdy);
+                    if (dist > d.detectionRadius) continue;
+                    const angle = Math.atan2(pdy, pdx);
+                    let diff = angle - moveAngle;
+                    while (diff > Math.PI) diff -= 2 * Math.PI;
+                    while (diff < -Math.PI) diff += 2 * Math.PI;
+                    if (Math.abs(diff) <= d.detectionHalfRad) {
+                        d.state = 'paused';
+                        d.pauseUntil = time + d.pauseMs;
+                        d.chargeVx = Math.cos(angle) * d.chargeSpeed;
+                        d.chargeVy = Math.sin(angle) * d.chargeSpeed;
+                        d.body.setVelocity(0, 0);
+                        break;
+                    }
+                }
+            } else if (d.state === 'orbiting') {
+                d.phi += d.orbitSpeed * dtSec;
+                d.x = d.orbitCenterX + Math.cos(d.phi) * d.orbitRadius;
+                d.y = d.orbitCenterY + Math.sin(d.phi) * d.orbitRadius;
+                d.body.setVelocity(0, 0);
+
+                const tangentAngle = d.phi + Math.PI / 2;
+                d.fan.x = d.x;
+                d.fan.y = d.y;
+                d.fan.rotation = tangentAngle;
+                d.fan.setFillStyle(d.spec.fanColor ?? 0xff4444, d.spec.fanAlpha ?? 0.3);
+                d.fan.setVisible(true);
+
+                const targets = [];
+                if (this.player1 && !this.player1.isInvincible) targets.push(this.player1);
+                if (this.player2 && !this.player2.isInvincible) targets.push(this.player2);
+                for (const p of targets) {
+                    const dx = p.sprite.x - d.x;
+                    const dy = p.sprite.y - d.y;
+                    const dist = Math.hypot(dx, dy);
+                    if (dist > d.detectionRadius) continue;
+                    const angle = Math.atan2(dy, dx);
+                    let diff = angle - tangentAngle;
+                    while (diff > Math.PI) diff -= 2 * Math.PI;
+                    while (diff < -Math.PI) diff += 2 * Math.PI;
+                    if (Math.abs(diff) <= d.detectionHalfRad) {
+                        d.state = 'paused';
+                        d.pauseUntil = time + d.pauseMs;
+                        d.chargeVx = Math.cos(angle) * d.chargeSpeed;
+                        d.chargeVy = Math.sin(angle) * d.chargeSpeed;
+                        d.body.setVelocity(0, 0);
+                        break;
+                    }
+                }
+            } else if (d.state === 'paused') {
+                d.fan.x = d.x;
+                d.fan.y = d.y;
+                d.fan.setFillStyle(d.spec.fanColor ?? 0xff4444, d.spec.fanAlphaPaused ?? 0.7);
+                d.body.setVelocity(0, 0);
+                if (time >= d.pauseUntil) {
+                    d.state = 'charging';
+                    d.body.setVelocity(d.chargeVx, d.chargeVy);
+                    d.fan.setVisible(false);
+                }
+            } else if (d.state === 'charging') {
+                if (d.x < -30 || d.x > W + 30 || d.y < -30 || d.y > H + 30) {
+                    d.destroy();
+                    return;
+                }
+            }
+        });
+    }
+
+    onDroneHitPlayer(player, drone) {
+        if (!drone.active) return;
+        const time = this.time.now;
+        if (!player.canBeHit(time)) return;
+        player.onHit(time);
+        drone.destroy();
+        this.lives -= 1;
+        this.updateUI();
+        if (this.lives <= 0) {
+            this.gameOver = true;
+            this.uiMessage.setText('GAME OVER\nEnter: 다시 도전 / ESC: 메뉴');
+        }
+    }
+
+    onDroneShot(drone, bullet) {
+        if (!drone.active || drone.hp <= 0) return;
+        if (bullet.pierce) {
+            const time = this.time.now;
+            const cd = bullet.contactCooldownMs ?? 0;
+            if (time - (bullet.lastHitTargetTime ?? -Infinity) < cd) return;
+            bullet.lastHitTargetTime = time;
+            drone.hp -= bullet.damage ?? 1;
+        } else {
+            drone.hp -= bullet.damage ?? 1;
+            bullet.destroy();
+        }
+        if (drone.hp <= 0) drone.destroy();
+    }
+
+    onDroneOrbitHit(drone, orb) {
+        if (!drone.active || drone.hp <= 0) return;
+        const time = this.time.now;
+        if (time - orb.lastHitTargetTime < orb.weaponSpec.contactCooldownMs) return;
+        orb.lastHitTargetTime = time;
+        drone.hp -= orb.weaponSpec.damage;
+        if (drone.hp <= 0) drone.destroy();
     }
 }

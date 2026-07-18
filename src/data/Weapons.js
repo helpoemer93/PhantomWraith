@@ -57,13 +57,13 @@ const Weapons = {
         id: 'orbit',
         name: '궤도탄',
         type: 'orbit',
-        radius: 44,
+        radius: 66,
         rotationSpeedRadPerSec: Math.PI * 2,
         damage: 2,
         contactCooldownMs: 220,
         orbCount: 1,
         color: 0x88ff88,
-        orbSize: 8,
+        orbSize: 10,
     },
 };
 

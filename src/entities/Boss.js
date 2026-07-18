@@ -47,6 +47,12 @@ class Boss {
         if (phase.birdEmitters && this.scene.spawnBirdEmitters) {
             this.scene.spawnBirdEmitters(phase.birdEmitters);
         }
+        if (phase.turretSpawner && this.scene.startTurretSpawner) {
+            this.scene.startTurretSpawner(phase.turretSpawner);
+        }
+        if (phase.suicideDroneSpawner && this.scene.startSuicideDroneSpawner) {
+            this.scene.startSuicideDroneSpawner(phase.suicideDroneSpawner);
+        }
         if (phase.sequence) {
             const reused = prevPatterns.find(
                 (p) => p instanceof Sequence && p.spec === phase.sequence && !p.done,
@@ -119,6 +125,12 @@ class Boss {
     fireBaseAttack(time) {
         const cfg = this.currentBaseAttack();
         if (!cfg) return;
+
+        if (cfg.type === 'gearMultiTarget') {
+            if (this.scene.fireGearBurst) this.scene.fireGearBurst(this, cfg);
+            return;
+        }
+
         let targetX;
         let targetY;
         const target = this.scene.getActivePlayerPos?.();

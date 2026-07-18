@@ -8,13 +8,13 @@ class BossSelectScene extends Phaser.Scene {
         this.centerX = GameConfig.GAME_WIDTH / 2;
         this.bossProgress = this.registry.get('bossProgress') || {};
 
-        this.add.text(this.centerX, 60, '보스 선택', {
-            fontSize: '26px', color: '#ffee88',
-        }).setOrigin(0.5);
-        this.add.text(this.centerX, 92,
+        this.add.text(this.centerX, 30, '보스 선택', {
+            fontSize: '24px', color: '#ffee88',
+        }).setOrigin(0.5).setDepth(10);
+        this.add.text(this.centerX, 60,
             '보스와 레벨을 선택하세요',
             { fontSize: '11px', color: '#8899aa' }
-        ).setOrigin(0.5);
+        ).setOrigin(0.5).setDepth(10);
 
         // 커서 상태: 이전에 선택했던 보스는 유지, 레벨은 항상 최고 도전 가능 레벨로.
         const prevStage = this.registry.get('selectedStage');
@@ -22,21 +22,29 @@ class BossSelectScene extends Phaser.Scene {
             ? prevStage : 0;
         this.levelSel = this.maxSelectableLevel(this.bossIndex);
 
+        this.scrollAreaTop = 78;
+        this.scrollAreaBottom = 590;
+        this.scrollOffset = 0;
+        this.rowH = 100;
+        this.rowGap = 14;
+
+        this.listContainer = this.add.container(0, 0);
+
         this.rows = [];
-        const rowH = 100;
         const rowW = GameConfig.GAME_WIDTH - 40;
         const startY = 150;
         for (let i = 0; i < Stages.length; i += 1) {
-            const y = startY + i * (rowH + 14);
-            this.rows.push(this.buildBossRow(Stages[i], i, y, rowW, rowH));
+            const y = startY + i * (this.rowH + this.rowGap);
+            this.rows.push(this.buildBossRow(Stages[i], i, y, rowW, this.rowH));
         }
 
         this.buildDetailPanel();
+        this.ensureCursorVisible();
 
         this.add.text(this.centerX, GameConfig.GAME_HEIGHT - 60,
             'W/S 또는 ↑/↓: 보스 변경    A/D 또는 ←/→: 레벨 변경\nEnter·Space: 확정    ESC: 메뉴',
             { fontSize: '11px', color: '#666677', align: 'center', lineSpacing: 4 }
-        ).setOrigin(0.5);
+        ).setOrigin(0.5).setDepth(10);
 
         const KC = Phaser.Input.Keyboard.KeyCodes;
         this.keyUp1 = this.input.keyboard.addKey(KC.W);
@@ -61,19 +69,19 @@ class BossSelectScene extends Phaser.Scene {
     }
 
     buildDetailPanel() {
-        const panelY = 380;
-        const panelH = 200;
+        const panelY = 605;
+        const panelH = 110;
         const panelW = GameConfig.GAME_WIDTH - 40;
         this.add.rectangle(this.centerX, panelY + panelH / 2, panelW, panelH, 0x14202e)
-            .setStrokeStyle(1, 0x445566);
+            .setStrokeStyle(1, 0x445566).setDepth(10);
         this.detailTitle = this.add.text(
-            this.centerX, panelY + 12, '',
-            { fontSize: '15px', color: '#ffee88' }
-        ).setOrigin(0.5, 0);
+            this.centerX, panelY + 8, '',
+            { fontSize: '14px', color: '#ffee88' }
+        ).setOrigin(0.5, 0).setDepth(10);
         this.detailBody = this.add.text(
-            30, panelY + 46, '',
-            { fontSize: '12px', color: '#ccccdd', lineSpacing: 8 }
-        );
+            30, panelY + 34, '',
+            { fontSize: '12px', color: '#ccccdd', lineSpacing: 6 }
+        ).setDepth(10);
     }
 
     getLabelsForLevel(boss, level) {
@@ -86,17 +94,19 @@ class BossSelectScene extends Phaser.Scene {
         const bg = this.add.rectangle(this.centerX, y, rowW, rowH, 0x223322)
             .setStrokeStyle(1, 0x555566);
         const nameText = this.add.text(
-            this.centerX - rowW / 2 + 16, y - rowH / 2 + 12,
-            boss.name, { fontSize: '18px', color: '#ffffff' }
+            this.centerX - rowW / 2 + 16, y - rowH / 2 + 14,
+            boss.name,
+            { fontSize: '18px', color: '#ffffff', padding: { top: 2, bottom: 6 } }
         );
         const stateText = this.add.text(
-            this.centerX - rowW / 2 + 16, y - rowH / 2 + 38,
-            '', { fontSize: '11px', color: '#aaaacc' }
+            this.centerX - rowW / 2 + 16, y - rowH / 2 + 46,
+            '',
+            { fontSize: '11px', color: '#aaaacc', padding: { top: 2, bottom: 4 } }
         );
         const rewardText = this.add.text(
-            this.centerX + rowW / 2 - 16, y - rowH / 2 + 12,
+            this.centerX + rowW / 2 - 16, y - rowH / 2 + 20,
             `보상: ${Weapons[boss.rewardWeapon]?.name ?? boss.rewardWeapon}`,
-            { fontSize: '11px', color: '#ffcc88' }
+            { fontSize: '11px', color: '#ffcc88', padding: { top: 2, bottom: 4 } }
         ).setOrigin(1, 0);
 
         const lvButtons = [];
@@ -133,7 +143,30 @@ class BossSelectScene extends Phaser.Scene {
             lvButtons.push({ btn, lbl });
         }
 
-        return { bg, nameText, stateText, rewardText, lvButtons, bossIndex: i, y };
+        this.listContainer.add([bg, nameText, stateText, rewardText]);
+        for (const lb of lvButtons) {
+            this.listContainer.add([lb.btn, lb.lbl]);
+        }
+
+        return { bg, nameText, stateText, rewardText, lvButtons, bossIndex: i, origY: y };
+    }
+
+    ensureCursorVisible() {
+        const row = this.rows[this.bossIndex];
+        if (!row) return;
+        const halfH = this.rowH / 2;
+        const cursorTop = row.origY - halfH - this.scrollOffset;
+        const cursorBottom = row.origY + halfH - this.scrollOffset;
+        if (cursorTop < this.scrollAreaTop) {
+            this.scrollOffset = row.origY - halfH - this.scrollAreaTop;
+        } else if (cursorBottom > this.scrollAreaBottom) {
+            this.scrollOffset = row.origY + halfH - this.scrollAreaBottom;
+        }
+        const listTotalH = Stages.length * (this.rowH + this.rowGap) - this.rowGap;
+        const scrollAreaH = this.scrollAreaBottom - this.scrollAreaTop;
+        const maxOffset = Math.max(0, listTotalH - scrollAreaH);
+        if (this.scrollOffset < 0) this.scrollOffset = 0;
+        if (this.scrollOffset > maxOffset) this.scrollOffset = maxOffset;
     }
 
     update() {
@@ -160,6 +193,7 @@ class BossSelectScene extends Phaser.Scene {
         const maxLv = this.maxSelectableLevel(this.bossIndex);
         if (this.levelSel > maxLv) this.levelSel = maxLv;
         if (this.levelSel < 1) this.levelSel = 1;
+        this.ensureCursorVisible();
         this.refresh();
     }
 
@@ -181,6 +215,22 @@ class BossSelectScene extends Phaser.Scene {
     }
 
     refresh() {
+        this.listContainer.y = -this.scrollOffset;
+        this.rows.forEach((r) => {
+            const y = r.origY - this.scrollOffset;
+            const halfH = this.rowH / 2;
+            const fullyOut = (y + halfH < this.scrollAreaTop) || (y - halfH > this.scrollAreaBottom);
+            const visible = !fullyOut;
+            r.bg.setVisible(visible);
+            r.nameText.setVisible(visible);
+            r.stateText.setVisible(visible);
+            r.rewardText.setVisible(visible);
+            r.lvButtons.forEach((b) => {
+                b.btn.setVisible(visible);
+                b.lbl.setVisible(visible);
+            });
+        });
+
         const currBoss = Stages[this.bossIndex];
         if (this.levelSel <= 1) {
             this.detailTitle.setText(`${currBoss.name} Lv1 — 첫 도전 (기본)`);

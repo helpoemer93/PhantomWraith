@@ -37,7 +37,7 @@ class LoadoutScene extends Phaser.Scene {
         this.buildCardUI();
 
         const previewW = 240;
-        const previewH = 130;
+        const previewH = 180;
         const previewX = (GameConfig.GAME_WIDTH - previewW) / 2;
         const previewY = 490;
         this.preview = new WeaponPreview(this, previewX, previewY, previewW, previewH);
