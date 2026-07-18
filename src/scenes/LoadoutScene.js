@@ -189,7 +189,9 @@ class LoadoutScene extends Phaser.Scene {
     persistAndExit(sceneKey) {
         this.registry.set('loadout', this.loadout);
         const bossProgress = this.registry.get('bossProgress') || {};
-        Storage.save(this.weaponLevels, this.loadout, bossProgress);
+        const crystals = this.registry.get('crystals') ?? 0;
+        const upgrades = this.registry.get('upgrades') || makeInitialUpgrades();
+        Storage.save(this.weaponLevels, this.loadout, bossProgress, crystals, upgrades);
         this.scene.start(sceneKey);
     }
 

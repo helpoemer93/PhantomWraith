@@ -1,9 +1,13 @@
 class Player {
-    constructor(scene, x, y, keys, color, startInvincible, initialSlots, weaponLevels) {
+    constructor(scene, x, y, keys, color, startInvincible, initialSlots, weaponLevels, upgrades) {
         this.scene = scene;
         this.keys = keys;
         this.color = color;
         this.weaponLevels = weaponLevels || {};
+        const u = upgrades || {};
+        this.moveSpeed = Upgrades.moveSpeed.applied(u.moveSpeed ?? 0);
+        this.hitImmunityMs = Upgrades.hitImmunity.applied(u.hitImmunity ?? 0);
+        this.size = Upgrades.hitbox.applied(u.hitbox ?? 0);
 
         this.isInvincible = startInvincible;
         this.hitImmunityUntil = 0;
@@ -13,7 +17,7 @@ class Player {
         this.lastFireTime = [0, 0, 0, 0];
         this.orbitOrbs = [];
 
-        const size = GameConfig.PLAYER_SIZE;
+        const size = this.size;
 
         this.sprite = scene.add.rectangle(x, y, size, size, color);
         scene.physics.add.existing(this.sprite);
@@ -77,7 +81,7 @@ class Player {
     }
 
     update(time) {
-        const speed = GameConfig.PLAYER_SPEED;
+        const speed = this.moveSpeed;
         let vx = 0;
         let vy = 0;
         if (this.keys.left.isDown) vx = -speed;
@@ -122,7 +126,7 @@ class Player {
 
     fireWeapon(w) {
         const x = this.sprite.x;
-        const y = this.sprite.y - GameConfig.PLAYER_SIZE / 2;
+        const y = this.sprite.y - this.size / 2;
 
         if (w.type === 'linear') {
             this.scene.spawnPlayerLinearBullet(x, y, w);
@@ -149,6 +153,6 @@ class Player {
     }
 
     onHit(time) {
-        this.hitImmunityUntil = time + GameConfig.HIT_IMMUNITY_MS;
+        this.hitImmunityUntil = time + this.hitImmunityMs;
     }
 }

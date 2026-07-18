@@ -70,6 +70,19 @@ const Weapons = {
 const BASIC_WEAPON_IDS = ['basicLinear', 'piercing', 'spread', 'homing', 'orbit'];
 const MAX_WEAPON_LEVEL = 5;
 
+// 각 무기 레벨업 시 오르는 스탯 한 줄 요약. LoadoutScene 미리보기 밑에 표시.
+const WEAPON_LEVEL_UP_DESCRIPTIONS = {
+    basicLinear: '발사간격 Lv당 -13%',
+    piercing: '데미지 +15%/Lv, 탄 크기 +5%/Lv',
+    spread: '탄수 +1 (2Lv마다), 데미지 +7.5%/Lv',
+    homing: '데미지 +15%/Lv',
+    orbit: '궤도수 +1 (2Lv마다), 데미지 +7.5%/Lv',
+};
+
+function getWeaponLevelUpDescription(id) {
+    return WEAPON_LEVEL_UP_DESCRIPTIONS[id] ?? '';
+}
+
 function isBasicWeapon(id) {
     return BASIC_WEAPON_IDS.includes(id);
 }

@@ -11,7 +11,7 @@ const phaserConfig = {
             debug: false,
         },
     },
-    scene: [BootScene, TutorialScene, BossSelectScene, LoadoutScene, GameScene, PatternLabScene],
+    scene: [BootScene, TutorialScene, BossSelectScene, LoadoutScene, GameScene, PatternLabScene, UpgradeShopScene],
 };
 
 const game = new Phaser.Game(phaserConfig);

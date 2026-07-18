@@ -4,7 +4,9 @@ class GameScene extends Phaser.Scene {
     }
 
     create() {
-        this.lives = GameConfig.MAX_LIVES;
+        const upgrades = this.registry.get('upgrades') || {};
+        this.maxLives = Upgrades.maxLives.applied(upgrades.maxLives ?? 0);
+        this.lives = this.maxLives;
         this.gameOver = false;
         this.cleared = false;
         this.clearAdvanceAt = null;
@@ -44,13 +46,13 @@ class GameScene extends Phaser.Scene {
             this,
             GameConfig.GAME_WIDTH * 0.35, bottomY,
             keys1, GameConfig.PLAYER_1_COLOR, false,
-            loadout.p1, weaponLevels
+            loadout.p1, weaponLevels, upgrades
         );
         this.player2 = new Player(
             this,
             GameConfig.GAME_WIDTH * 0.65, bottomY,
             keys2, GameConfig.PLAYER_2_COLOR, true,
-            loadout.p2, weaponLevels
+            loadout.p2, weaponLevels, upgrades
         );
 
         const selected = this.registry.get('selectedStage');
@@ -110,10 +112,6 @@ class GameScene extends Phaser.Scene {
             GameConfig.GAME_WIDTH / 2, GameConfig.GAME_HEIGHT / 2, '',
             { fontSize: '28px', color: '#ff8888', align: 'center' }
         ).setOrigin(0.5);
-
-        this.uiEndpointCounter = this.add.text(10, 55, '', {
-            fontSize: '11px', color: '#ffcc66',
-        });
 
         this.add.text(10, GameConfig.GAME_HEIGHT - 22, 'ESC: 메뉴로', {
             fontSize: '12px', color: '#666677',
@@ -325,9 +323,6 @@ class GameScene extends Phaser.Scene {
         }
         if (currDir !== 0) st.direction = currDir;
         st.prevX = currentX;
-        if (this.uiEndpointCounter) {
-            this.uiEndpointCounter.setText(`끝점 카운터: ${st.counter} / ${cfg.triggerCount ?? 5}`);
-        }
     }
 
     spawnPlayerLinearBullet(x, y, w) {
@@ -1075,8 +1070,10 @@ class GameScene extends Phaser.Scene {
         const bossProgress = this.registry.get('bossProgress') || {};
         const weaponLevels = this.registry.get('weaponLevels') || {};
         const loadout = this.registry.get('loadout');
+        const upgrades = this.registry.get('upgrades') || {};
 
         const prevBossLv = bossProgress[bossData.id] ?? 0;
+        const isFirstClearOfLevel = this.bossLevel > prevBossLv;
         const newBossLv = Math.max(prevBossLv, this.bossLevel);
         bossProgress[bossData.id] = newBossLv;
 
@@ -1086,20 +1083,27 @@ class GameScene extends Phaser.Scene {
         const isLevelUp = newWpnLv > prevWpnLv;
         weaponLevels[rewardId] = newWpnLv;
 
+        // 결정 지급: 최초 클리어 = Lv×2, 재도전 = Lv
+        const crystalReward = isFirstClearOfLevel ? this.bossLevel * 2 : this.bossLevel;
+        const prevCrystals = this.registry.get('crystals') ?? 0;
+        const newCrystals = prevCrystals + crystalReward;
+
         this.registry.set('bossProgress', bossProgress);
         this.registry.set('weaponLevels', weaponLevels);
-        Storage.save(weaponLevels, loadout, bossProgress);
+        this.registry.set('crystals', newCrystals);
+        Storage.save(weaponLevels, loadout, bossProgress, newCrystals, upgrades);
 
         const wpnName = Weapons[rewardId]?.name ?? rewardId;
-        const msg = isLevelUp
-            ? `클리어!\n${wpnName} Lv${newWpnLv} 해금!`
-            : `클리어!\n${wpnName} 이미 Lv${prevWpnLv}`;
-        this.uiMessage.setText(msg);
+        const line1 = isLevelUp
+            ? `${wpnName} Lv${newWpnLv} 해금!`
+            : `${wpnName} 이미 Lv${prevWpnLv}`;
+        const line2 = `결정 +${crystalReward} (총 ${newCrystals})`;
+        this.uiMessage.setText(`클리어!\n${line1}\n${line2}`);
         this.clearAdvanceAt = this.time.now + 3000;
     }
 
     updateUI() {
-        this.uiLives.setText(`목숨: ${this.lives}/${GameConfig.MAX_LIVES}`);
+        this.uiLives.setText(`목숨: ${this.lives}/${this.maxLives}`);
     }
 
     updateHpBar() {

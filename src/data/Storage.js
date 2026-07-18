@@ -1,5 +1,5 @@
 const Storage = {
-    KEY: 'pw_save_v4',
+    KEY: 'pw_save_v5',
 
     load() {
         try {
@@ -7,18 +7,22 @@ const Storage = {
             if (!raw) return null;
             const data = JSON.parse(raw);
             if (!data || !data.weaponLevels || !data.loadout || !data.bossProgress) return null;
+            if (typeof data.crystals !== 'number') data.crystals = 0;
+            if (!data.upgrades) data.upgrades = makeInitialUpgrades();
             return data;
         } catch (e) {
             return null;
         }
     },
 
-    save(weaponLevels, loadout, bossProgress) {
+    save(weaponLevels, loadout, bossProgress, crystals, upgrades) {
         try {
             localStorage.setItem(this.KEY, JSON.stringify({
                 weaponLevels,
                 loadout,
                 bossProgress,
+                crystals: crystals ?? 0,
+                upgrades: upgrades ?? makeInitialUpgrades(),
             }));
         } catch (e) {
             // 저장 실패는 무시 (용량 초과 등)
@@ -44,5 +48,7 @@ function makeInitialSaveData() {
             p2: ['basicLinear', null, null, null],
         },
         bossProgress: {},
+        crystals: 0,
+        upgrades: makeInitialUpgrades(),
     };
 }

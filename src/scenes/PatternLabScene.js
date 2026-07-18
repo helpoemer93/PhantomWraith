@@ -176,7 +176,7 @@ class PatternLabScene extends Phaser.Scene {
         this.makeButton(
             LAB_SIDEBAR_X + 8, y,
             LAB_SIDEBAR_W - 16, 22,
-            '🎯 유도 미사일',
+            '🌪 조준 나선 (가속)',
             () => this.fireSeekingMissile(),
             '#ffaacc',
         );

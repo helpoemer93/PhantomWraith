@@ -38,6 +38,10 @@ class WeaponPreview {
         this.label = scene.add.text(x + width / 2, y - 14, '', {
             fontSize: '11px', color: '#ccccdd',
         }).setOrigin(0.5, 0);
+
+        this.levelUpLabel = scene.add.text(x + width / 2, y + height + 6, '', {
+            fontSize: '11px', color: '#ffddaa',
+        }).setOrigin(0.5, 0);
     }
 
     setWeapon(weaponId, level) {
@@ -52,6 +56,7 @@ class WeaponPreview {
         this.lastFireTime = 0;
         this.startTime = null;
         this.label.setText(this.weapon ? this.weapon.name : '');
+        this.levelUpLabel.setText(this.weapon ? `레벨업 효과: ${getWeaponLevelUpDescription(weaponId)}` : '');
     }
 
     clearBullets() {
@@ -210,6 +215,7 @@ class WeaponPreview {
         this.scarecrow.destroy();
         this.player.destroy();
         this.label.destroy();
+        this.levelUpLabel.destroy();
         this.clearBullets();
         this.clearOrbs();
     }
