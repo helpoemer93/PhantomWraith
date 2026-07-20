@@ -7,7 +7,7 @@ class Boss {
             this.maxHp = this.data.maxHp;
         } else {
             this.data = data;
-            this.maxHp = Math.round(data.maxHp * Math.pow(1.25, this.level - 1));
+            this.maxHp = Math.round(data.maxHp * Math.pow(1.20, this.level - 1));
         }
         this.hp = this.maxHp;
         this.phaseIndex = -1;

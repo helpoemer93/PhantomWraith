@@ -34,17 +34,51 @@ class BotController {
         this.wallMarginPx = opts.wallMarginPx ?? 80;
     }
 
-    // 딜링 위치 보너스: 보스·포탑 x좌표와 정렬되면 총알이 위로 나가서 맞음
+    // 딜링 위치 보너스: 위협 드론 > 보스 > 포탑 우선순위로 x정렬 시 가산점.
+    // 캐리 드론은 회수 저지 목적으로 최우선. 자폭드론 charging은 회피 대상이라 격추 시도 X.
     aimBonus(x, y) {
         let bonus = 0;
+        // 채취드론(캐리 걷어치우는 게 클리어 조건)
+        const harvesters = this.scene.harvesterDronesGroup;
+        if (harvesters) {
+            harvesters.children.each((d) => {
+                if (!d || !d.active || d.hp <= 0) return;
+                const dx = Math.abs(x - d.x);
+                const alignRange = 40;
+                if (dx >= alignRange || y <= d.y + 30) return;
+                let weight = 0;
+                if (d.state === 'carrying') weight = 6;        // 최우선. 최대 +240
+                else if (d.state === 'wallRiding') weight = 4; // 최대 +160
+                else if (d.state === 'descending') weight = 3.5; // 최대 +140
+                bonus += (alignRange - dx) * weight;
+            });
+        }
+        // 자폭드론
+        const suicides = this.scene.suicideDronesGroup;
+        if (suicides) {
+            suicides.children.each((d) => {
+                if (!d || !d.active || d.hp <= 0) return;
+                if (d.state === 'charging') return;
+                const dx = Math.abs(x - d.x);
+                const alignRange = 40;
+                if (dx >= alignRange || y <= d.y + 30) return;
+                let weight = 0;
+                if (d.state === 'orbiting') weight = 4;      // 최대 +160
+                else if (d.state === 'approaching') weight = 3.5;
+                else if (d.state === 'paused') weight = 3;
+                bonus += (alignRange - dx) * weight;
+            });
+        }
+        // 보스
         const boss = this.scene.boss;
         if (boss && boss.sprite && boss.sprite.active && !boss.isDead()) {
             const dxBoss = Math.abs(x - boss.sprite.x);
             const alignRange = 40;
             if (dxBoss < alignRange && y > boss.sprite.y + 50) {
-                bonus += (alignRange - dxBoss) * 4;
+                bonus += (alignRange - dxBoss) * 4; // 최대 +160
             }
         }
+        // 포탑
         const turrets = this.scene.turretsGroup;
         if (turrets) {
             turrets.children.each((t) => {
@@ -52,11 +86,40 @@ class BotController {
                 const dx = Math.abs(x - t.x);
                 const alignRange = 30;
                 if (dx < alignRange && y > t.y + 30) {
-                    bonus += (alignRange - dx) * 1.5;
+                    bonus += (alignRange - dx) * 1.5; // 최대 +45
                 }
             });
         }
         return bonus;
+    }
+
+    // 안전 상태에서 이동 목표를 정할 때 참조할 우선 위협 드론. 없으면 null.
+    pickPriorityDroneTarget() {
+        let best = null;
+        let bestScore = -Infinity;
+        const consider = (d, score) => {
+            if (score > bestScore) { bestScore = score; best = d; }
+        };
+        const harvesters = this.scene.harvesterDronesGroup;
+        if (harvesters) {
+            harvesters.children.each((d) => {
+                if (!d || !d.active || d.hp <= 0) return;
+                if (d.state === 'carrying') consider(d, 100);
+                else if (d.state === 'wallRiding') consider(d, 60);
+                else if (d.state === 'descending') consider(d, 50);
+            });
+        }
+        const suicides = this.scene.suicideDronesGroup;
+        if (suicides) {
+            suicides.children.each((d) => {
+                if (!d || !d.active || d.hp <= 0) return;
+                if (d.state === 'charging') return;
+                if (d.state === 'orbiting') consider(d, 70);
+                else if (d.state === 'approaching') consider(d, 50);
+                else if (d.state === 'paused') consider(d, 40);
+            });
+        }
+        return best;
     }
 
     wallPenalty(x, y) {
@@ -140,7 +203,9 @@ class BotController {
                 }
                 const moveCost = Math.hypot(sx - px, sy - py) * 0.4;
                 const wallPen = this.wallPenalty(sx, sy);
-                const score = dangerScore + partnerBonus - moveCost + wallPen;
+                // 무적 캐릭터도 딜링 참여: 안전한 셀 중 위협 드론/보스 x정렬 선호
+                const aimB = this.aimBonus(sx, sy);
+                const score = dangerScore + partnerBonus - moveCost + wallPen + aimB;
                 if (score > bestScore) {
                     bestScore = score;
                     bestX = sx;
@@ -156,13 +221,19 @@ class BotController {
         const currDanger = dm.getArrivalInRadius(px, py, this.hitRadius);
 
         if (currDanger >= this.dangerSafe) {
-            // 안전: 딜링 좋은 위치(보스 x정렬)로 이동
-            const boss = this.scene.boss;
+            // 안전: 우선 위협 드론이 있으면 그 x로, 없으면 보스 x정렬
             let tx = this.homeX;
             let ty = this.homeY;
-            if (boss && boss.sprite && boss.sprite.active && !boss.isDead()) {
-                tx = boss.sprite.x;
-                ty = GameConfig.GAME_HEIGHT * 0.65;
+            const priorityDrone = this.pickPriorityDroneTarget();
+            if (priorityDrone) {
+                tx = priorityDrone.x;
+                ty = Math.max(priorityDrone.y + 120, GameConfig.GAME_HEIGHT * 0.55);
+            } else {
+                const boss = this.scene.boss;
+                if (boss && boss.sprite && boss.sprite.active && !boss.isDead()) {
+                    tx = boss.sprite.x;
+                    ty = GameConfig.GAME_HEIGHT * 0.65;
+                }
             }
             // 파트너와 겹치지 않게 오프셋
             const partnerX = this.partner?.sprite?.x ?? null;
@@ -212,7 +283,8 @@ class BotController {
                 }
             }
             bonus += this.wallPenalty(nx, ny);
-            bonus += this.aimBonus(nx, ny);
+            // 위험 회피 상태에선 딜링 유혹이 회피 우선순위를 흐리지 않도록 대폭 축소.
+            bonus += this.aimBonus(nx, ny) * 0.2;
             const score = (val === Infinity ? 10000 : val) + bonus;
             if (score > bestScore) {
                 bestScore = score;

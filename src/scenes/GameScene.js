@@ -199,6 +199,9 @@ class GameScene extends Phaser.Scene {
         this.botLog = [];
         this.botLogMaxFrames = 300; // 약 5초 (60fps 기준)
         this.botDumped = false;
+        this.botLogger = (typeof window !== 'undefined' && window.__botLoggerInstance)
+            ? window.__botLoggerInstance
+            : new BotLogger();
     }
 
     update(time, delta) {
@@ -232,10 +235,86 @@ class GameScene extends Phaser.Scene {
                     });
                 }
             });
+            // 드론: velocity 기반 미래 위치를 시점별 정적 위험으로 마킹.
+            // 지금 위치는 baseArrival(반응 여유)로 표시 → 봇이 즉시 밀려나지 않고 방향 판단.
+            const droneTimeSamples = [0, 80, 160, 240, 320, 480, 640];
+            const pushDroneHazards = (d, radiusPadding, baseArrivalByState) => {
+                if (!d || !d.active || !d.body) return;
+                const r = (d.body.radius ?? 14) + radiusPadding;
+                const baseArrival = baseArrivalByState[d.state] ?? baseArrivalByState.default;
+                // orbiting 상태는 원운동으로 미래 위치 예측 (velocity가 접선이라 직선 예측 부정확).
+                const isOrbiting = d.state === 'orbiting'
+                    && typeof d.phi === 'number'
+                    && typeof d.orbitRadius === 'number'
+                    && typeof d.orbitSpeed === 'number'
+                    && typeof d.orbitCenterX === 'number'
+                    && typeof d.orbitCenterY === 'number';
+                const vx = d.body.velocity.x;
+                const vy = d.body.velocity.y;
+                for (const t of droneTimeSamples) {
+                    const s = t / 1000;
+                    let fx;
+                    let fy;
+                    if (isOrbiting) {
+                        const futurePhi = d.phi + d.orbitSpeed * s;
+                        fx = d.orbitCenterX + Math.cos(futurePhi) * d.orbitRadius;
+                        fy = d.orbitCenterY + Math.sin(futurePhi) * d.orbitRadius;
+                    } else {
+                        fx = d.x + vx * s;
+                        fy = d.y + vy * s;
+                    }
+                    staticHazards.push({
+                        x: fx,
+                        y: fy,
+                        radius: r,
+                        arrivalTime: Math.max(t, baseArrival),
+                    });
+                }
+            };
+            this.suicideDronesGroup.children.each((d) => {
+                pushDroneHazards(d, 15, {
+                    charging: 60,
+                    approaching: 120,
+                    orbiting: 200,
+                    paused: 200,
+                    default: 250,
+                });
+            });
+            this.harvesterDronesGroup.children.each((d) => {
+                pushDroneHazards(d, 15, {
+                    descending: 120,
+                    wallRiding: 200,
+                    carrying: 100,
+                    default: 250,
+                });
+            });
+            // 포탑 연결선(페이즈 3): 살아있는 포탑 완전그래프 세그먼트를 위험선으로
+            const lineHazards = [];
+            if (this.turretConnectionsSpec) {
+                const turrets = [];
+                this.turretsGroup.children.each((t) => {
+                    if (t && t.active && t.hp > 0) turrets.push(t);
+                });
+                if (turrets.length >= 2) {
+                    const threshold = this.turretConnectionsSpec.damageThreshold ?? 8;
+                    const lineRadius = threshold + 20;
+                    const lineArrival = 150;
+                    for (let i = 0; i < turrets.length; i += 1) {
+                        for (let j = i + 1; j < turrets.length; j += 1) {
+                            lineHazards.push({
+                                x1: turrets[i].x, y1: turrets[i].y,
+                                x2: turrets[j].x, y2: turrets[j].y,
+                                radius: lineRadius, arrivalTime: lineArrival,
+                            });
+                        }
+                    }
+                }
+            }
             this.dangerMap.update(
-                [this.bossBullets, this.snowflakesGroup, this.suicideDronesGroup, this.harvesterDronesGroup],
+                [this.bossBullets, this.snowflakesGroup],
                 time,
                 staticHazards,
+                lineHazards,
             );
         }
         if (this.botMode && this.bot1 && this.bot2) {
@@ -247,6 +326,10 @@ class GameScene extends Phaser.Scene {
         }
 
         if (this.cleared) {
+            if (this.botMode && !this.botDumped) {
+                this.dumpBotLog(time, 'win');
+                this.botDumped = true;
+            }
             if (this.clearAdvanceAt !== null && time >= this.clearAdvanceAt) {
                 this.scene.start('BossSelectScene');
                 return;
@@ -258,7 +341,7 @@ class GameScene extends Phaser.Scene {
         }
         if (this.gameOver) {
             if (this.botMode && !this.botDumped) {
-                this.dumpBotLog(time);
+                this.dumpBotLog(time, 'lose');
                 this.botDumped = true;
             }
             if (Phaser.Input.Keyboard.JustDown(this.restartKey)) {
@@ -1188,6 +1271,7 @@ class GameScene extends Phaser.Scene {
         const time = this.time.now;
         if (!player.canBeHit(time)) return;
         player.onHit(time);
+        this.recordBotHit('bullet', this.classifyBossBullet(bullet), player);
         if (!bullet.isGear && !bullet.isElectricField) bullet.destroy();
         this.lives -= 1;
         this.updateUI();
@@ -1202,6 +1286,7 @@ class GameScene extends Phaser.Scene {
         const time = this.time.now;
         if (!player.canBeHit(time)) return;
         player.onHit(time);
+        this.recordBotHit('boss-body', null, player);
         this.lives -= 1;
         this.updateUI();
         if (this.lives <= 0) {
@@ -1806,6 +1891,7 @@ class GameScene extends Phaser.Scene {
         const time = this.time.now;
         if (!player.canBeHit(time)) return;
         player.onHit(time);
+        this.recordBotHit('suicide-drone', drone.state ?? null, player);
         drone.destroy();
         this.lives -= 1;
         this.updateUI();
@@ -2010,6 +2096,7 @@ class GameScene extends Phaser.Scene {
         const time = this.time.now;
         if (!player.canBeHit(time)) return;
         player.onHit(time);
+        this.recordBotHit('harvester-drone', drone.state ?? null, player);
         this.lives -= 1;
         this.updateUI();
         if (this.lives <= 0) {
@@ -2152,6 +2239,7 @@ class GameScene extends Phaser.Scene {
             }
             if (hit) {
                 p.onHit(time);
+                this.recordBotHit('turret-link', null, p);
                 this.lives -= 1;
                 this.updateUI();
                 if (this.lives <= 0) {
@@ -2182,7 +2270,17 @@ class GameScene extends Phaser.Scene {
             this.player1.keys = this.bot1.getKeys();
             this.player2.keys = this.bot2.getKeys();
             this.botUI.setText('BOT ON');
+            const loadout = this.registry.get('loadout') || { p1: [], p2: [] };
+            this.botLogger.startRun({
+                bossName: this.boss?.data?.name ?? 'unknown',
+                bossLv: this.bossLevel,
+                weapons: { p1: loadout.p1, p2: loadout.p2 },
+                startSceneTime: this.time.now,
+            });
         } else {
+            if (this.botLogger.isActive()) {
+                this.botLogger.endRun('abort', this.time.now);
+            }
             if (this.botOriginalKeys1) this.player1.keys = this.botOriginalKeys1;
             if (this.botOriginalKeys2) this.player2.keys = this.botOriginalKeys2;
             this.bot1 = null;
@@ -2226,11 +2324,49 @@ class GameScene extends Phaser.Scene {
         if (this.botLog.length > this.botLogMaxFrames) this.botLog.shift();
     }
 
-    dumpBotLog(time) {
+    classifyBossBullet(b) {
+        if (!b) return 'unknown';
+        if (b.isGear) return 'gear';
+        if (b.isOrbit) return 'orbit';
+        if (b.isElectricField) return 'electricField';
+        if (b.hasWavyMotion) return 'wavy';
+        if (b.hasHoming) return 'homing';
+        if (b.hasSeeking) return 'seeking';
+        if (b.decelerating) return 'decelerating';
+        if (b.isBird) return 'bird';
+        if (b.isSnowflake) return 'snowflake';
+        if (b.isTriangle) return 'triangle';
+        return 'linear';
+    }
+
+    recordBotHit(cause, subType, player) {
+        if (!this.botMode || !this.botLogger.isActive()) return;
+        if (!player || !player.sprite) return;
+        const botCtl = (player === this.player1) ? this.bot1 : this.bot2;
+        let predictedDanger = null;
+        if (botCtl && this.dangerMap) {
+            const d = this.dangerMap.getArrivalInRadius(player.sprite.x, player.sprite.y, botCtl.hitRadius);
+            predictedDanger = (d === Infinity) ? 9999 : Math.round(d);
+        }
+        this.botLogger.recordHit({
+            t: this.time.now,
+            cause,
+            subType,
+            playerIdx: (player === this.player1) ? 1 : 2,
+            x: player.sprite.x,
+            y: player.sprite.y,
+            phase: this.boss?.phaseIndex ?? 0,
+            livesBefore: this.lives,
+            predictedDanger,
+        });
+    }
+
+    dumpBotLog(time, result = 'lose') {
         const bossName = this.boss.data.name;
         const lv = this.bossLevel;
-        console.log(`=== BOT 사망 로그 [${bossName} Lv${lv}] ===`);
-        console.log(`사망 시각 ${Math.round(time)}, 총 스왑 ${this.botSwapCount}회`);
+        const resultLabel = result === 'win' ? '승리' : (result === 'lose' ? '패배' : result);
+        console.log(`=== BOT ${resultLabel} 로그 [${bossName} Lv${lv}] ===`);
+        console.log(`종료 시각 ${Math.round(time)}, 총 스왑 ${this.botSwapCount}회, 피격 ${this.botLogger.getCurrentHitCount()}회`);
         console.log(`최근 ${this.botLog.length} 프레임:`);
         console.table(this.botLog.slice(-60).map((f) => ({
             t: f.t,
@@ -2241,7 +2377,9 @@ class GameScene extends Phaser.Scene {
             p1: `${f.p1.inv ? '무' : '일'} ${f.p1.danger}ms (${f.p1.x},${f.p1.y})`,
             p2: `${f.p2.inv ? '무' : '일'} ${f.p2.danger}ms (${f.p2.x},${f.p2.y})`,
         })));
-        console.log('전체 로그:', JSON.stringify(this.botLog));
+        console.log('전체 프레임 로그:', JSON.stringify(this.botLog));
+        this.botLogger.setSwaps(this.botSwapCount);
+        this.botLogger.endRun(result, time);
     }
 
     updateBotUI() {
@@ -2253,7 +2391,7 @@ class GameScene extends Phaser.Scene {
             `BOT ON`,
             `P1[${tag(s1)}] ${fmt(s1.danger)}`,
             `P2[${tag(s2)}] ${fmt(s2.danger)}`,
-            `swaps: ${this.botSwapCount}`,
+            `swaps: ${this.botSwapCount}  hits: ${this.botLogger.getCurrentHitCount()}`,
         ];
         this.botUI.setText(lines.join('\n'));
     }

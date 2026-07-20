@@ -309,7 +309,7 @@ const IceBoss = {
     buildLevelData(level) {
         const d = JSON.parse(JSON.stringify(IceBossData));
         const lv = Math.max(1, level);
-        const scale = Math.pow(1.25, lv - 1);
+        const scale = Math.pow(1.20, lv - 1);
         d.maxHp = Math.round(d.maxHp * scale);
 
         if (lv >= 2) {

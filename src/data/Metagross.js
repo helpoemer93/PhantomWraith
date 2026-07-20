@@ -78,7 +78,7 @@ const MetagrossData = {
                     maxHp: 15,
                     decayPercentPerSecPerDrone: 2.5,
                     speed: 250,
-                    healPercent: 2,
+                    healPercent: 1,
                     carriedGearColor: 0x888888,
                     carriedGearRadius: 8,
                 },
@@ -152,7 +152,7 @@ const Metagross = {
     buildLevelData(level) {
         const d = JSON.parse(JSON.stringify(MetagrossData));
         const lv = Math.max(1, level);
-        const scale = Math.pow(1.25, lv - 1);
+        const scale = Math.pow(1.20, lv - 1);
         d.maxHp = Math.round(d.maxHp * scale);
         for (const phase of d.phases) {
             if (phase.turretSpawner?.turret?.maxHp) {

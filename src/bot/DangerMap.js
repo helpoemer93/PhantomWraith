@@ -33,9 +33,10 @@ class DangerMap {
 
     // groups: [bossBullets, snowflakesGroup, ...] 등 위험한 그룹 배열
     // sceneTime: 현재 씬 time.now (일부 예측 함수에 필요)
-    // staticHazards: [{ x, y, radius }] 정적 위험 지대 (예: 보스 몸통)
+    // staticHazards: [{ x, y, radius, arrivalTime }] 정적 위험 지대 (예: 보스 몸통, 드론)
+    // lineHazards: [{ x1, y1, x2, y2, radius, arrivalTime }] 위험 선분 (예: 포탑 연결선)
     // 계산은 항상 수행, 렌더는 visible일 때만
-    update(groups, sceneTime, staticHazards) {
+    update(groups, sceneTime, staticHazards, lineHazards) {
         this.reset();
 
         for (const group of groups) {
@@ -55,6 +56,16 @@ class DangerMap {
                 }
                 const radius = BulletPredictor.getRadius(b, this.bulletRadiusFallback);
                 const preds = BulletPredictor.predict(b, this.timeSamples, sceneTime);
+                // 기어는 벽을 따라 사각형 궤도 → 시점 사이 궤적도 위험. 선분으로 연결.
+                if (b.isGear) {
+                    let prev = null;
+                    for (const p of preds) {
+                        this.markCells(p.x, p.y, radius, radius, p.t);
+                        if (prev) this.markLine(prev.x, prev.y, p.x, p.y, radius, p.t);
+                        prev = p;
+                    }
+                    return;
+                }
                 for (const p of preds) {
                     this.markCells(p.x, p.y, radius, radius, p.t);
                 }
@@ -64,6 +75,12 @@ class DangerMap {
         if (staticHazards) {
             for (const h of staticHazards) {
                 this.markCells(h.x, h.y, h.radius, h.radius, h.arrivalTime ?? 0);
+            }
+        }
+
+        if (lineHazards) {
+            for (const h of lineHazards) {
+                this.markLine(h.x1, h.y1, h.x2, h.y2, h.radius, h.arrivalTime ?? 0);
             }
         }
 
@@ -98,6 +115,24 @@ class DangerMap {
             }
         }
         return minArrival;
+    }
+
+    // 선분 (x1,y1)-(x2,y2) 를 stepPx 간격으로 샘플링해서 각 점을 원형 위험으로 마킹.
+    // radius: 각 샘플점의 위험 반경 (판정 반경 + 여유).
+    markLine(x1, y1, x2, y2, radius, arrivalTime, stepPx = 15) {
+        const dx = x2 - x1;
+        const dy = y2 - y1;
+        const len = Math.hypot(dx, dy);
+        if (len < 0.01) {
+            this.markCells(x1, y1, radius, radius, arrivalTime);
+            return;
+        }
+        const steps = Math.max(1, Math.ceil(len / stepPx));
+        const ux = dx / steps;
+        const uy = dy / steps;
+        for (let i = 0; i <= steps; i += 1) {
+            this.markCells(x1 + ux * i, y1 + uy * i, radius, radius, arrivalTime);
+        }
     }
 
     markCells(px, py, halfW, halfH, arrivalTime) {
