@@ -38,6 +38,11 @@ class PatternLabScene extends Phaser.Scene {
         this.suicideDronesGroup = this.physics.add.group();
         this.suicideDroneSpawnerSpec = null;
         this.suicideDroneSpawnLastTime = null;
+        this.harvesterDronesGroup = this.physics.add.group();
+        this.harvesterDroneSpawnerSpec = null;
+        this.turretConnectionsSpec = null;
+        this.turretConnectionsGraphics = null;
+        this.turretMotionSpec = null;
         this.clouds = [];
         this.cloudSpec = null;
         this.birdEmitterSpec = null;
@@ -272,8 +277,13 @@ class PatternLabScene extends Phaser.Scene {
         this.snowflakesGroup.children.each((s) => s && s.destroy());
         this.turretsGroup.children.each((t) => t && t.destroy());
         this.suicideDronesGroup.children.each((d) => d && d.destroy());
+        this.harvesterDronesGroup.children.each((d) => d && d.destroy());
         this.turretSpawnerSpec = null;
         this.suicideDroneSpawnerSpec = null;
+        this.harvesterDroneSpawnerSpec = null;
+        this.turretConnectionsSpec = null;
+        this.turretMotionSpec = null;
+        if (this.turretConnectionsGraphics) this.turretConnectionsGraphics.clear();
         this.despawnClouds();
         this.despawnBirdEmitters();
     }
@@ -311,6 +321,31 @@ class PatternLabScene extends Phaser.Scene {
             }
             if (phase.suicideDroneSpawner) {
                 this.spawnSuicideDrone(phase.suicideDroneSpawner.drone);
+            }
+            if (phase.harvesterDroneSpawner) {
+                this.startHarvesterDroneSpawner(phase.harvesterDroneSpawner);
+            }
+            if (phase.turretMotion) {
+                this.turretMotionSpec = phase.turretMotion;
+            }
+            if (phase.turretConnections) {
+                this.startTurretConnections(phase.turretConnections);
+                if (phase.turretSpawner) {
+                    for (let i = 0; i < 3; i += 1) this.spawnTurretRandom(phase.turretSpawner);
+                } else {
+                    const prevTurret = this.bossData.phases[0]?.turretSpawner;
+                    if (prevTurret) {
+                        for (let i = 0; i < 4; i += 1) this.spawnTurretRandom(prevTurret);
+                    }
+                }
+                if (phase.turretMotion) {
+                    this.turretsGroup.children.each((t) => {
+                        if (t && t.active && !t.invincible) this.initTurretOrbit(t);
+                    });
+                }
+            }
+            if (phase.invincibleTurret) {
+                this.spawnInvincibleTurret(phase.invincibleTurret);
             }
             if (phase.baseAttack) {
                 const prevPhaseIdx = this.boss.phaseIndex;
@@ -361,6 +396,21 @@ class PatternLabScene extends Phaser.Scene {
             this.interludeFrozen = false;
             return;
         }
+        if (inter.spec.type === 'sparkLink') {
+            this.spawnElectricField(inter.spec.field);
+            const turretRef = this.turretSpawnerSpec || this.bossData.phases[0]?.turretSpawner;
+            const count = inter.spec.turretsToSpawn ?? 3;
+            if (turretRef) {
+                for (let i = 0; i < count; i += 1) this.spawnTurretRandom(turretRef);
+            }
+            this.currentInterlude = inter;
+            this.interludeStartTime = this.time.now;
+            this.interludeFrozen = false;
+            if (!this.turretConnectionsGraphics) {
+                this.turretConnectionsGraphics = this.add.graphics();
+            }
+            return;
+        }
         this.currentInterlude = inter;
         this.interludeStartTime = this.time.now;
         this.interludeFrozen = false;
@@ -379,8 +429,13 @@ class PatternLabScene extends Phaser.Scene {
         this.snowflakesGroup.children.each((s) => s && s.destroy());
         this.turretsGroup.children.each((t) => t && t.destroy());
         this.suicideDronesGroup.children.each((d) => d && d.destroy());
+        this.harvesterDronesGroup.children.each((d) => d && d.destroy());
         this.turretSpawnerSpec = null;
         this.suicideDroneSpawnerSpec = null;
+        this.harvesterDroneSpawnerSpec = null;
+        this.turretConnectionsSpec = null;
+        this.turretMotionSpec = null;
+        if (this.turretConnectionsGraphics) this.turretConnectionsGraphics.clear();
         this.despawnClouds();
         this.despawnBirdEmitters();
         this.despawnPlayers();
@@ -430,10 +485,22 @@ class PatternLabScene extends Phaser.Scene {
             this.player2.sprite, this.suicideDronesGroup,
             (s, d) => this.onDroneLabHit(this.player2, d),
         );
+        this.harvesterOverlap1 = this.physics.add.overlap(
+            this.player1.sprite, this.harvesterDronesGroup,
+            (s, d) => this.onHarvesterLabHit(this.player1, d),
+        );
+        this.harvesterOverlap2 = this.physics.add.overlap(
+            this.player2.sprite, this.harvesterDronesGroup,
+            (s, d) => this.onHarvesterLabHit(this.player2, d),
+        );
+        this.harvesterGearOverlap = this.physics.add.overlap(
+            this.harvesterDronesGroup, this.bossBullets,
+            (d, b) => this.onHarvesterTouchBossBullet(d, b),
+        );
     }
 
     despawnPlayers() {
-        for (const ov of [this.overlap1, this.overlap2, this.snowflakeOverlap1, this.snowflakeOverlap2, this.droneOverlap1, this.droneOverlap2]) {
+        for (const ov of [this.overlap1, this.overlap2, this.snowflakeOverlap1, this.snowflakeOverlap2, this.droneOverlap1, this.droneOverlap2, this.harvesterOverlap1, this.harvesterOverlap2, this.harvesterGearOverlap]) {
             if (ov) ov.destroy();
         }
         this.overlap1 = null;
@@ -442,6 +509,9 @@ class PatternLabScene extends Phaser.Scene {
         this.snowflakeOverlap2 = null;
         this.droneOverlap1 = null;
         this.droneOverlap2 = null;
+        this.harvesterOverlap1 = null;
+        this.harvesterOverlap2 = null;
+        this.harvesterGearOverlap = null;
         for (const p of [this.player1, this.player2]) {
             if (!p) continue;
             p.sprite.destroy();
@@ -526,6 +596,8 @@ class PatternLabScene extends Phaser.Scene {
         this.updateTurrets(time, delta);
         this.updateSuicideDroneSpawner(time);
         this.updateSuicideDrones(time, delta);
+        this.updateHarvesterDrones(time, delta);
+        this.updateTurretConnections(time);
         this.updateGears(delta);
 
         this.bossBullets.children.each((b) => {
@@ -1398,34 +1470,94 @@ class PatternLabScene extends Phaser.Scene {
         t.shotsPerBurst = turretSpec.shotsPerBurst ?? 3;
         t.shotIntervalMs = turretSpec.shotIntervalMs ?? 200;
         t.missileSpec = turretSpec.missile ?? { radius: 4, speed: 200, color: 0xff8844 };
-        t.lastCycleStart = this.time.now;
+        t.lastCycleStart = this.time.now - Math.random() * t.fireIntervalMs;
         t.shotsFiredInCycle = t.shotsPerBurst;
         t.cycleAngleLocked = false;
+        t.cyclesCompleted = 0;
+        if (this.turretMotionSpec) {
+            this.initTurretOrbit(t);
+        }
+        return t;
+    }
+
+    initTurretOrbit(t) {
+        t.orbitCenterX = t.x;
+        t.orbitCenterY = t.y;
+        t.orbitAngle = Math.random() * Math.PI * 2;
+        t.orbitRadius = 0;
+    }
+
+    spawnInvincibleTurret(cfg) {
+        const cx = cfg.spawnX ?? LAB_PLAY_W / 2;
+        const cy = cfg.spawnY ?? 300;
+        const r = cfg.radius ?? 80;
+        const startAngle = Math.random() * Math.PI * 2;
+        const x = cx + Math.cos(startAngle) * r;
+        const y = cy + Math.sin(startAngle) * r;
+
+        const baseTurret = this.turretSpawnerSpec?.turret ?? this.bossData.phases[0]?.turretSpawner?.turret ?? {};
+        const turretSpec = { ...baseTurret };
+        const t = this.spawnTurret(x, y, turretSpec);
+        t.invincible = true;
+        t.setFillStyle(cfg.color ?? 0xccccdd);
+        t.setStrokeStyle(3, cfg.strokeColor ?? 0x4488ff);
+        t.setAlpha(1);
+        t.orbitCenterX = cx;
+        t.orbitCenterY = cy;
+        t.orbitAngle = startAngle;
+        t.orbitRadius = r;
+        t.orbitAngularSpeed = cfg.angularSpeedRadPerSec ?? Math.PI / 2;
+        t.orbitGrowRate = 0;
         return t;
     }
 
     updateTurrets(time, delta) {
         const dtSec = delta / 1000;
-        const turretCount = this.turretsGroup.countActive();
+        let turretCount = 0;
+        this.turretsGroup.children.each((t) => {
+            if (t && t.active && !t.invincible) turretCount += 1;
+        });
+        const motion = this.turretMotionSpec;
         this.turretsGroup.children.each((t) => {
             if (!t || !t.active || !t.body) return;
 
-            t.hp -= t.maxHp * (t.decayPercentPerSec / 100) * turretCount * dtSec;
-            if (t.hp <= 0) {
-                t.destroy();
-                return;
+            if (!t.invincible) {
+                t.hp -= t.maxHp * (t.decayPercentPerSec / 100) * turretCount * dtSec;
+                if (t.hp <= 0) {
+                    t.destroy();
+                    return;
+                }
+                t.setAlpha(0.4 + 0.6 * (t.hp / t.maxHp));
             }
-            t.setAlpha(0.4 + 0.6 * (t.hp / t.maxHp));
+
+            if (t.orbitCenterX !== undefined) {
+                const w = t.orbitAngularSpeed ?? motion?.angularSpeedRadPerSec ?? Math.PI / 4;
+                const dr = t.orbitGrowRate ?? motion?.radiusGrowRatePxPerSec ?? 3;
+                t.orbitAngle += w * dtSec;
+                t.orbitRadius += dr * dtSec;
+                const tanUx = -Math.sin(t.orbitAngle);
+                const tanUy = Math.cos(t.orbitAngle);
+                const radUx = Math.cos(t.orbitAngle);
+                const radUy = Math.sin(t.orbitAngle);
+                const tangSpeed = w * t.orbitRadius;
+                t.body.setVelocity(tanUx * tangSpeed + radUx * dr, tanUy * tangSpeed + radUy * dr);
+            }
 
             if (time - t.lastCycleStart >= t.fireIntervalMs) {
                 t.lastCycleStart = time;
                 t.shotsFiredInCycle = 0;
                 t.cycleAngleLocked = false;
+                t.cyclesCompleted = (t.cyclesCompleted ?? 0) + 1;
+                const harvSpec = this.harvesterDroneSpawnerSpec;
+                if (harvSpec && t.cyclesCompleted % (harvSpec.cyclesPerSpawn ?? 3) === 0) {
+                    this.spawnHarvesterDrone(t.x, t.y, harvSpec.drone);
+                }
             }
             if (t.shotsFiredInCycle < t.shotsPerBurst) {
                 const nextShotAt = t.lastCycleStart + t.shotsFiredInCycle * t.shotIntervalMs;
                 if (time >= nextShotAt) {
-                    if (!t.cycleAngleLocked) {
+                    const aimEveryShot = motion && motion.aimEveryShot;
+                    if (aimEveryShot || !t.cycleAngleLocked) {
                         const target = this.getActivePlayerPos();
                         if (target) {
                             const dx = target.x - t.x;
@@ -1437,7 +1569,7 @@ class PatternLabScene extends Phaser.Scene {
                             t.cycleUx = 0;
                             t.cycleUy = 1;
                         }
-                        t.cycleAngleLocked = true;
+                        if (!aimEveryShot) t.cycleAngleLocked = true;
                     }
                     this.fireTurretMissile(t);
                     t.shotsFiredInCycle += 1;
@@ -1656,14 +1788,9 @@ class PatternLabScene extends Phaser.Scene {
     fireGearBurst(boss, cfg) {
         const bx = boss.sprite.x;
         const by = boss.sprite.y;
-        const targets = [];
         const activePos = this.getActivePlayerPos();
-        if (activePos) targets.push(activePos);
-        this.turretsGroup.children.each((t) => {
-            if (t && t.active && t.hp > 0) targets.push({ x: t.x, y: t.y });
-        });
-        for (const t of targets) {
-            this.spawnGear(bx, by, t.x, t.y, cfg.gear);
+        if (activePos) {
+            this.spawnGear(bx, by, activePos.x, activePos.y, cfg.gear);
         }
     }
 
@@ -1811,5 +1938,266 @@ class PatternLabScene extends Phaser.Scene {
         s.tintColor = color;
         s.frozen = false;
         return s;
+    }
+
+    startHarvesterDroneSpawner(spec) {
+        this.harvesterDroneSpawnerSpec = spec;
+    }
+
+    spawnHarvesterDrone(x, y, droneSpec) {
+        const radius = droneSpec.radius ?? 14;
+        const drone = this.add.circle(x, y, radius, droneSpec.color ?? 0xccaa44);
+        drone.setStrokeStyle(2, droneSpec.strokeColor ?? 0x664422);
+        this.physics.add.existing(drone);
+        this.harvesterDronesGroup.add(drone);
+        drone.body.setCircle(radius);
+
+        drone.spec = droneSpec;
+        drone.state = 'descending';
+        drone.hp = droneSpec.maxHp ?? 20;
+        drone.maxHp = droneSpec.maxHp ?? 20;
+        drone.decayPercentPerSecPerDrone = droneSpec.decayPercentPerSecPerDrone ?? 2.5;
+        drone.moveSpeed = droneSpec.speed ?? 250;
+        drone.healPercent = droneSpec.healPercent ?? 2;
+        drone.wallSegment = null;
+        drone.rotation2 = null;
+        drone.carryingGear = false;
+        drone.carriedGearVisual = null;
+        drone.body.setVelocity(0, drone.moveSpeed);
+        return drone;
+    }
+
+    updateHarvesterDrones(time, delta) {
+        const dtSec = delta / 1000;
+        const W = LAB_PLAY_W;
+        const H = LAB_H;
+        const droneCount = this.harvesterDronesGroup.countActive();
+        this.harvesterDronesGroup.children.each((d) => {
+            if (!d || !d.active || !d.body) return;
+
+            d.hp -= d.maxHp * (d.decayPercentPerSecPerDrone / 100) * droneCount * dtSec;
+            if (d.hp <= 0) {
+                d.destroy();
+                return;
+            }
+
+            const s = d.moveSpeed;
+
+            if (d.state === 'descending') {
+                if (d.y >= H) {
+                    d.y = H;
+                    d.wallSegment = 'bottom';
+                    d.rotation2 = (d.x < W / 2) ? 'ccw' : 'cw';
+                    d.state = 'wallRiding';
+                    this.setHarvesterWallVelocity(d);
+                } else if (d.x <= 0) {
+                    d.x = 0;
+                    d.wallSegment = 'left';
+                    d.rotation2 = 'ccw';
+                    d.state = 'wallRiding';
+                    this.setHarvesterWallVelocity(d);
+                } else if (d.x >= W) {
+                    d.x = W;
+                    d.wallSegment = 'right';
+                    d.rotation2 = 'cw';
+                    d.state = 'wallRiding';
+                    this.setHarvesterWallVelocity(d);
+                }
+            } else if (d.state === 'wallRiding') {
+                if (d.wallSegment === 'bottom') {
+                    d.y = H;
+                    if (d.rotation2 === 'ccw' && d.x <= 0) {
+                        d.x = 0; d.wallSegment = 'left'; this.setHarvesterWallVelocity(d);
+                    } else if (d.rotation2 === 'cw' && d.x >= W) {
+                        d.x = W; d.wallSegment = 'right'; this.setHarvesterWallVelocity(d);
+                    }
+                } else if (d.wallSegment === 'left') {
+                    d.x = 0;
+                    if (d.rotation2 === 'ccw' && d.y <= 0) {
+                        d.y = 0; d.wallSegment = 'top'; this.setHarvesterWallVelocity(d);
+                    } else if (d.rotation2 === 'cw' && d.y >= H) {
+                        d.y = H; d.wallSegment = 'bottom'; this.setHarvesterWallVelocity(d);
+                    }
+                } else if (d.wallSegment === 'top') {
+                    d.y = 0;
+                    if (d.rotation2 === 'ccw' && d.x >= W) {
+                        d.x = W; d.wallSegment = 'right'; this.setHarvesterWallVelocity(d);
+                    } else if (d.rotation2 === 'cw' && d.x <= 0) {
+                        d.x = 0; d.wallSegment = 'left'; this.setHarvesterWallVelocity(d);
+                    }
+                } else if (d.wallSegment === 'right') {
+                    d.x = W;
+                    if (d.rotation2 === 'ccw' && d.y >= H) {
+                        d.y = H; d.wallSegment = 'bottom'; this.setHarvesterWallVelocity(d);
+                    } else if (d.rotation2 === 'cw' && d.y <= 0) {
+                        d.y = 0; d.wallSegment = 'top'; this.setHarvesterWallVelocity(d);
+                    }
+                }
+            } else if (d.state === 'carrying') {
+                const bx = this.boss?.sprite?.x ?? W / 2;
+                const by = this.boss?.sprite?.y ?? 140;
+                const dx = bx - d.x;
+                const dy = by - d.y;
+                const dist = Math.hypot(dx, dy) || 1;
+                const bossHalf = (this.boss?.data?.size ?? 70) / 2;
+                const droneR = d.spec.radius ?? 14;
+                if (dist < bossHalf + droneR) {
+                    this.onHarvesterReachBoss(d);
+                } else {
+                    d.body.setVelocity((dx / dist) * s, (dy / dist) * s);
+                }
+            }
+
+            if (d.carriedGearVisual && d.carriedGearVisual.active) {
+                d.carriedGearVisual.x = d.x;
+                d.carriedGearVisual.y = d.y - (d.spec.radius ?? 14) - 4;
+            }
+        });
+    }
+
+    setHarvesterWallVelocity(d) {
+        const s = d.moveSpeed;
+        const seg = d.wallSegment;
+        const rot = d.rotation2;
+        if (seg === 'bottom') {
+            d.body.setVelocity(rot === 'ccw' ? -s : s, 0);
+        } else if (seg === 'left') {
+            d.body.setVelocity(0, rot === 'ccw' ? -s : s);
+        } else if (seg === 'top') {
+            d.body.setVelocity(rot === 'ccw' ? s : -s, 0);
+        } else if (seg === 'right') {
+            d.body.setVelocity(0, rot === 'ccw' ? s : -s);
+        }
+    }
+
+    onHarvesterTouchBossBullet(drone, bullet) {
+        if (!drone.active || drone.hp <= 0) return;
+        if (!bullet || !bullet.active || !bullet.isGear) return;
+        if (drone.carryingGear) return;
+        if (drone.state !== 'wallRiding') return;
+
+        drone.carryingGear = true;
+        drone.state = 'carrying';
+        const gearColor = drone.spec.carriedGearColor ?? 0x888888;
+        const gearR = drone.spec.carriedGearRadius ?? 8;
+        const visual = this.add.circle(drone.x, drone.y - (drone.spec.radius ?? 14) - 4, gearR, gearColor);
+        visual.setStrokeStyle(2, 0x555555);
+        drone.carriedGearVisual = visual;
+        drone.once('destroy', () => {
+            if (visual && visual.active) visual.destroy();
+        });
+        bullet.destroy();
+    }
+
+    onHarvesterReachBoss(drone) {
+        if (!drone.active || drone.hp <= 0) return;
+        if (drone.state !== 'carrying') return;
+        if (drone.carriedGearVisual && drone.carriedGearVisual.active) {
+            drone.carriedGearVisual.destroy();
+        }
+        drone.carriedGearVisual = null;
+        drone.carryingGear = false;
+        drone.state = 'descending';
+        drone.wallSegment = null;
+        drone.rotation2 = null;
+        drone.body.setVelocity(0, drone.moveSpeed);
+    }
+
+    onHarvesterLabHit(player, drone) {
+        if (!drone.active) return;
+        const time = this.time.now;
+        if (!player.canBeHit(time)) return;
+        player.onHit(time);
+        this.hitCount += 1;
+        this.updateModeUI();
+    }
+
+    startTurretConnections(spec) {
+        this.turretConnectionsSpec = spec;
+        if (!this.turretConnectionsGraphics) {
+            this.turretConnectionsGraphics = this.add.graphics();
+        }
+    }
+
+    updateTurretConnections(time) {
+        const g = this.turretConnectionsGraphics;
+        if (!g) return;
+        g.clear();
+
+        const activeSpec = this.turretConnectionsSpec;
+        const interSpec = (this.currentInterlude?.spec?.type === 'sparkLink')
+            ? this.currentInterlude.spec : null;
+        if (!activeSpec && !interSpec) return;
+
+        const turrets = [];
+        this.turretsGroup.children.each((t) => {
+            if (t && t.active && t.hp > 0) turrets.push(t);
+        });
+        if (turrets.length < 2) return;
+
+        let lineColor;
+        let lineWidth;
+        let alpha;
+        let threshold = null;
+
+        if (activeSpec) {
+            const period = activeSpec.blinkPeriodMs ?? 400;
+            const aMin = activeSpec.alphaMin ?? 0.4;
+            const aMax = activeSpec.alphaMax ?? 1.0;
+            alpha = aMin + (aMax - aMin) * (0.5 + 0.5 * Math.sin(time / period * Math.PI));
+            lineColor = activeSpec.lineColor ?? 0xffdd44;
+            lineWidth = activeSpec.lineWidth ?? 1.5;
+            threshold = activeSpec.damageThreshold ?? 8;
+        } else {
+            const preview = interSpec.previewConnection ?? {};
+            const duration = interSpec.durationMs ?? 5000;
+            const elapsed = time - this.interludeStartTime;
+            const progress = Math.max(0, Math.min(1, elapsed / duration));
+            const aStart = preview.alphaStart ?? 0;
+            const aEnd = preview.alphaEnd ?? 0.5;
+            alpha = aStart + (aEnd - aStart) * progress;
+            lineColor = preview.lineColor ?? 0xffdd44;
+            lineWidth = preview.lineWidth ?? 1.5;
+        }
+
+        g.lineStyle(lineWidth, lineColor, alpha);
+        for (let i = 0; i < turrets.length; i += 1) {
+            for (let j = i + 1; j < turrets.length; j += 1) {
+                g.lineBetween(turrets[i].x, turrets[i].y, turrets[j].x, turrets[j].y);
+            }
+        }
+
+        if (threshold === null) return;
+        const players = [this.player1, this.player2];
+        for (const p of players) {
+            if (!p || p.isInvincible) continue;
+            if (!p.canBeHit(time)) continue;
+            const px = p.sprite.x;
+            const py = p.sprite.y;
+            let hit = false;
+            for (let i = 0; i < turrets.length && !hit; i += 1) {
+                for (let j = i + 1; j < turrets.length && !hit; j += 1) {
+                    const dist = this.pointToSegmentDistance(px, py, turrets[i].x, turrets[i].y, turrets[j].x, turrets[j].y);
+                    if (dist < threshold) hit = true;
+                }
+            }
+            if (hit) {
+                p.onHit(time);
+                this.hitCount += 1;
+                this.updateModeUI();
+            }
+        }
+    }
+
+    pointToSegmentDistance(px, py, x1, y1, x2, y2) {
+        const dx = x2 - x1;
+        const dy = y2 - y1;
+        const len2 = dx * dx + dy * dy;
+        if (len2 < 0.0001) return Math.hypot(px - x1, py - y1);
+        let t = ((px - x1) * dx + (py - y1) * dy) / len2;
+        t = Math.max(0, Math.min(1, t));
+        const cx = x1 + t * dx;
+        const cy = y1 + t * dy;
+        return Math.hypot(px - cx, py - cy);
     }
 }

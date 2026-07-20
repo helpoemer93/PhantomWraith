@@ -57,7 +57,7 @@ const Weapons = {
         id: 'orbit',
         name: '궤도탄',
         type: 'orbit',
-        radius: 66,
+        radius: 99,
         rotationSpeedRadPerSec: Math.PI * 2,
         damage: 2,
         contactCooldownMs: 220,

@@ -32,6 +32,11 @@ class GameScene extends Phaser.Scene {
         this.suicideDronesGroup = this.physics.add.group();
         this.suicideDroneSpawnerSpec = null;
         this.suicideDroneSpawnLastTime = null;
+        this.harvesterDronesGroup = this.physics.add.group();
+        this.harvesterDroneSpawnerSpec = null;
+        this.turretConnectionsSpec = null;
+        this.turretConnectionsGraphics = null;
+        this.turretMotionSpec = null;
         this.birdEmitterSpec = null;
         this.birdEmitters = [];
         this.birdActivateLastTime = 0;
@@ -90,6 +95,14 @@ class GameScene extends Phaser.Scene {
             (bossSprite, bullet) => this.onBossHit(bullet)
         );
         this.physics.add.overlap(
+            this.player1.sprite, this.boss.sprite,
+            () => this.onBossBodyHit(this.player1)
+        );
+        this.physics.add.overlap(
+            this.player2.sprite, this.boss.sprite,
+            () => this.onBossBodyHit(this.player2)
+        );
+        this.physics.add.overlap(
             this.boss.sprite, this.orbitOrbs,
             (bossSprite, orb) => this.onBossOrbitHit(orb)
         );
@@ -116,6 +129,26 @@ class GameScene extends Phaser.Scene {
         this.physics.add.overlap(
             this.suicideDronesGroup, this.orbitOrbs,
             (d, o) => this.onDroneOrbitHit(d, o)
+        );
+        this.physics.add.overlap(
+            this.player1.sprite, this.harvesterDronesGroup,
+            (p, d) => this.onHarvesterHitPlayer(this.player1, d)
+        );
+        this.physics.add.overlap(
+            this.player2.sprite, this.harvesterDronesGroup,
+            (p, d) => this.onHarvesterHitPlayer(this.player2, d)
+        );
+        this.physics.add.overlap(
+            this.harvesterDronesGroup, this.playerBullets,
+            (d, b) => this.onHarvesterShot(d, b)
+        );
+        this.physics.add.overlap(
+            this.harvesterDronesGroup, this.orbitOrbs,
+            (d, o) => this.onHarvesterOrbitHit(d, o)
+        );
+        this.physics.add.overlap(
+            this.harvesterDronesGroup, this.bossBullets,
+            (d, b) => this.onHarvesterTouchBossBullet(d, b)
         );
 
         this.uiLives = this.add.text(10, 10, '', {
@@ -148,12 +181,69 @@ class GameScene extends Phaser.Scene {
         });
 
         this.updateUI();
+
+        this.dangerMap = new DangerMap(this, {});
+        this.dangerToggleKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.G);
+        this.botToggleKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.B);
+        this.botMode = false;
+        this.botOriginalKeys1 = null;
+        this.botOriginalKeys2 = null;
+        this.bot1 = null;
+        this.bot2 = null;
+        this.botLastSwapTime = 0;
+        this.botSwapCooldownMs = 300;
+        this.botUI = this.add.text(GameConfig.GAME_WIDTH - 10, 10, '', {
+            fontSize: '11px', color: '#88ffcc', align: 'right',
+        }).setOrigin(1, 0);
+        this.botSwapCount = 0;
+        this.botLog = [];
+        this.botLogMaxFrames = 300; // 약 5초 (60fps 기준)
+        this.botDumped = false;
     }
 
     update(time, delta) {
         if (Phaser.Input.Keyboard.JustDown(this.escKey)) {
             this.scene.start('BootScene');
             return;
+        }
+        if (this.dangerToggleKey && Phaser.Input.Keyboard.JustDown(this.dangerToggleKey)) {
+            this.dangerMap.toggle();
+        }
+        if (this.botToggleKey && Phaser.Input.Keyboard.JustDown(this.botToggleKey)) {
+            this.toggleBotMode();
+        }
+        if (this.dangerMap && (this.botMode || this.dangerMap.visible)) {
+            const staticHazards = [];
+            if (this.boss && this.boss.sprite && this.boss.sprite.active) {
+                staticHazards.push({
+                    x: this.boss.sprite.x,
+                    y: this.boss.sprite.y,
+                    radius: (this.boss.data.size ?? 70) / 2 + 20,
+                    arrivalTime: 0,
+                });
+            }
+            this.turretsGroup.children.each((t) => {
+                if (t && t.active && t.hp > 0) {
+                    staticHazards.push({
+                        x: t.x,
+                        y: t.y,
+                        radius: 70,
+                        arrivalTime: 200,
+                    });
+                }
+            });
+            this.dangerMap.update(
+                [this.bossBullets, this.snowflakesGroup, this.suicideDronesGroup, this.harvesterDronesGroup],
+                time,
+                staticHazards,
+            );
+        }
+        if (this.botMode && this.bot1 && this.bot2) {
+            this.bot1.update(time, delta);
+            this.bot2.update(time, delta);
+            this.tryBotSwap(time);
+            this.updateBotUI();
+            this.logBotFrame(time);
         }
 
         if (this.cleared) {
@@ -167,6 +257,10 @@ class GameScene extends Phaser.Scene {
             return;
         }
         if (this.gameOver) {
+            if (this.botMode && !this.botDumped) {
+                this.dumpBotLog(time);
+                this.botDumped = true;
+            }
             if (Phaser.Input.Keyboard.JustDown(this.restartKey)) {
                 this.scene.start('BossSelectScene');
             }
@@ -198,6 +292,8 @@ class GameScene extends Phaser.Scene {
         this.updateGears(delta);
         this.updateSuicideDroneSpawner(time);
         this.updateSuicideDrones(time, delta);
+        this.updateHarvesterDrones(time, delta);
+        this.updateTurretConnections(time);
 
         this.playerBullets.children.each((b) => {
             if (!b) return;
@@ -1016,6 +1112,20 @@ class GameScene extends Phaser.Scene {
             this.interludeFrozen = false;
             return;
         }
+        if (inter.spec.type === 'sparkLink') {
+            this.spawnElectricField(inter.spec.field);
+            const count = inter.spec.turretsToSpawn ?? 3;
+            for (let i = 0; i < count; i += 1) {
+                if (this.turretSpawnerSpec) this.spawnTurretRandom(this.turretSpawnerSpec);
+            }
+            this.currentInterlude = inter;
+            this.interludeStartTime = this.time.now;
+            this.interludeFrozen = false;
+            if (!this.turretConnectionsGraphics) {
+                this.turretConnectionsGraphics = this.add.graphics();
+            }
+            return;
+        }
         this.currentInterlude = inter;
         this.interludeStartTime = this.time.now;
         this.interludeFrozen = false;
@@ -1079,6 +1189,19 @@ class GameScene extends Phaser.Scene {
         if (!player.canBeHit(time)) return;
         player.onHit(time);
         if (!bullet.isGear && !bullet.isElectricField) bullet.destroy();
+        this.lives -= 1;
+        this.updateUI();
+        if (this.lives <= 0) {
+            this.gameOver = true;
+            this.uiMessage.setText('GAME OVER\nEnter: 다시 도전 / ESC: 메뉴');
+        }
+    }
+
+    onBossBodyHit(player) {
+        if (!player) return;
+        const time = this.time.now;
+        if (!player.canBeHit(time)) return;
+        player.onHit(time);
         this.lives -= 1;
         this.updateUI();
         if (this.lives <= 0) {
@@ -1172,14 +1295,9 @@ class GameScene extends Phaser.Scene {
     fireGearBurst(boss, cfg) {
         const bx = boss.sprite.x;
         const by = boss.sprite.y;
-        const targets = [];
         const activePos = this.getActivePlayerPos();
-        if (activePos) targets.push(activePos);
-        this.turretsGroup.children.each((t) => {
-            if (t && t.active && t.hp > 0) targets.push({ x: t.x, y: t.y });
-        });
-        for (const t of targets) {
-            this.spawnGear(bx, by, t.x, t.y, cfg.gear);
+        if (activePos) {
+            this.spawnGear(bx, by, activePos.x, activePos.y, cfg.gear);
         }
     }
 
@@ -1357,34 +1475,70 @@ class GameScene extends Phaser.Scene {
         t.shotsPerBurst = turretSpec.shotsPerBurst ?? 3;
         t.shotIntervalMs = turretSpec.shotIntervalMs ?? 200;
         t.missileSpec = turretSpec.missile ?? { radius: 4, speed: 200, color: 0xff8844 };
-        t.lastCycleStart = this.time.now;
+        t.lastCycleStart = this.time.now - Math.random() * t.fireIntervalMs;
         t.shotsFiredInCycle = t.shotsPerBurst;
         t.cycleAngleLocked = false;
+        t.cyclesCompleted = 0;
+        if (this.turretMotionSpec) {
+            this.initTurretOrbit(t);
+        }
         return t;
+    }
+
+    initTurretOrbit(t) {
+        t.orbitCenterX = t.x;
+        t.orbitCenterY = t.y;
+        t.orbitAngle = Math.random() * Math.PI * 2;
+        t.orbitRadius = 0;
     }
 
     updateTurrets(time, delta) {
         const dtSec = delta / 1000;
-        const turretCount = this.turretsGroup.countActive();
+        let turretCount = 0;
+        this.turretsGroup.children.each((t) => {
+            if (t && t.active && !t.invincible) turretCount += 1;
+        });
+        const motion = this.turretMotionSpec;
         this.turretsGroup.children.each((t) => {
             if (!t || !t.active || !t.body) return;
 
-            t.hp -= t.maxHp * (t.decayPercentPerSec / 100) * turretCount * dtSec;
-            if (t.hp <= 0) {
-                t.destroy();
-                return;
+            if (!t.invincible) {
+                t.hp -= t.maxHp * (t.decayPercentPerSec / 100) * turretCount * dtSec;
+                if (t.hp <= 0) {
+                    t.destroy();
+                    return;
+                }
+                t.setAlpha(0.4 + 0.6 * (t.hp / t.maxHp));
             }
-            t.setAlpha(0.4 + 0.6 * (t.hp / t.maxHp));
+
+            if (t.orbitCenterX !== undefined) {
+                const w = t.orbitAngularSpeed ?? motion?.angularSpeedRadPerSec ?? Math.PI / 4;
+                const dr = t.orbitGrowRate ?? motion?.radiusGrowRatePxPerSec ?? 3;
+                t.orbitAngle += w * dtSec;
+                t.orbitRadius += dr * dtSec;
+                const tanUx = -Math.sin(t.orbitAngle);
+                const tanUy = Math.cos(t.orbitAngle);
+                const radUx = Math.cos(t.orbitAngle);
+                const radUy = Math.sin(t.orbitAngle);
+                const tangSpeed = w * t.orbitRadius;
+                t.body.setVelocity(tanUx * tangSpeed + radUx * dr, tanUy * tangSpeed + radUy * dr);
+            }
 
             if (time - t.lastCycleStart >= t.fireIntervalMs) {
                 t.lastCycleStart = time;
                 t.shotsFiredInCycle = 0;
                 t.cycleAngleLocked = false;
+                t.cyclesCompleted = (t.cyclesCompleted ?? 0) + 1;
+                const harvSpec = this.harvesterDroneSpawnerSpec;
+                if (harvSpec && t.cyclesCompleted % (harvSpec.cyclesPerSpawn ?? 3) === 0) {
+                    this.spawnHarvesterDrone(t.x, t.y, harvSpec.drone);
+                }
             }
             if (t.shotsFiredInCycle < t.shotsPerBurst) {
                 const nextShotAt = t.lastCycleStart + t.shotsFiredInCycle * t.shotIntervalMs;
                 if (time >= nextShotAt) {
-                    if (!t.cycleAngleLocked) {
+                    const aimEveryShot = motion && motion.aimEveryShot;
+                    if (aimEveryShot || !t.cycleAngleLocked) {
                         const target = this.getActivePlayerPos();
                         if (target) {
                             const dx = target.x - t.x;
@@ -1396,7 +1550,7 @@ class GameScene extends Phaser.Scene {
                             t.cycleUx = 0;
                             t.cycleUy = 1;
                         }
-                        t.cycleAngleLocked = true;
+                        if (!aimEveryShot) t.cycleAngleLocked = true;
                     }
                     this.fireTurretMissile(t);
                     t.shotsFiredInCycle += 1;
@@ -1418,6 +1572,10 @@ class GameScene extends Phaser.Scene {
 
     onTurretHit(turret, bullet) {
         if (!turret.active || turret.hp <= 0) return;
+        if (turret.invincible) {
+            if (!bullet.pierce) bullet.destroy();
+            return;
+        }
         if (bullet.pierce) {
             const time = this.time.now;
             const cd = bullet.contactCooldownMs ?? 0;
@@ -1433,6 +1591,7 @@ class GameScene extends Phaser.Scene {
 
     onTurretOrbitHit(turret, orb) {
         if (!turret.active || turret.hp <= 0) return;
+        if (turret.invincible) return;
         const time = this.time.now;
         if (time - orb.lastHitTargetTime < orb.weaponSpec.contactCooldownMs) return;
         orb.lastHitTargetTime = time;
@@ -1678,5 +1837,436 @@ class GameScene extends Phaser.Scene {
         orb.lastHitTargetTime = time;
         drone.hp -= orb.weaponSpec.damage;
         if (drone.hp <= 0) drone.destroy();
+    }
+
+    startHarvesterDroneSpawner(spec) {
+        this.harvesterDroneSpawnerSpec = spec;
+    }
+
+    spawnHarvesterDrone(x, y, droneSpec) {
+        const radius = droneSpec.radius ?? 14;
+        const drone = this.add.circle(x, y, radius, droneSpec.color ?? 0xccaa44);
+        drone.setStrokeStyle(2, droneSpec.strokeColor ?? 0x664422);
+        this.physics.add.existing(drone);
+        this.harvesterDronesGroup.add(drone);
+        drone.body.setCircle(radius);
+
+        drone.spec = droneSpec;
+        drone.state = 'descending';
+        drone.hp = droneSpec.maxHp ?? 20;
+        drone.maxHp = droneSpec.maxHp ?? 20;
+        drone.decayPercentPerSecPerDrone = droneSpec.decayPercentPerSecPerDrone ?? 2.5;
+        drone.moveSpeed = droneSpec.speed ?? 250;
+        drone.healPercent = droneSpec.healPercent ?? 2;
+        drone.wallSegment = null;
+        drone.rotation2 = null;
+        drone.carryingGear = false;
+        drone.carriedGearVisual = null;
+        drone.body.setVelocity(0, drone.moveSpeed);
+        return drone;
+    }
+
+    updateHarvesterDrones(time, delta) {
+        const dtSec = delta / 1000;
+        const W = GameConfig.GAME_WIDTH;
+        const H = GameConfig.GAME_HEIGHT;
+        const droneCount = this.harvesterDronesGroup.countActive();
+        this.harvesterDronesGroup.children.each((d) => {
+            if (!d || !d.active || !d.body) return;
+
+            d.hp -= d.maxHp * (d.decayPercentPerSecPerDrone / 100) * droneCount * dtSec;
+            if (d.hp <= 0) {
+                d.destroy();
+                return;
+            }
+
+            const s = d.moveSpeed;
+
+            if (d.state === 'descending') {
+                if (d.y >= H) {
+                    d.y = H;
+                    d.wallSegment = 'bottom';
+                    d.rotation2 = (d.x < W / 2) ? 'ccw' : 'cw';
+                    d.state = 'wallRiding';
+                    this.setHarvesterWallVelocity(d);
+                } else if (d.x <= 0) {
+                    d.x = 0;
+                    d.wallSegment = 'left';
+                    d.rotation2 = 'ccw';
+                    d.state = 'wallRiding';
+                    this.setHarvesterWallVelocity(d);
+                } else if (d.x >= W) {
+                    d.x = W;
+                    d.wallSegment = 'right';
+                    d.rotation2 = 'cw';
+                    d.state = 'wallRiding';
+                    this.setHarvesterWallVelocity(d);
+                }
+            } else if (d.state === 'wallRiding') {
+                if (d.wallSegment === 'bottom') {
+                    d.y = H;
+                    if (d.rotation2 === 'ccw' && d.x <= 0) {
+                        d.x = 0; d.wallSegment = 'left'; this.setHarvesterWallVelocity(d);
+                    } else if (d.rotation2 === 'cw' && d.x >= W) {
+                        d.x = W; d.wallSegment = 'right'; this.setHarvesterWallVelocity(d);
+                    }
+                } else if (d.wallSegment === 'left') {
+                    d.x = 0;
+                    if (d.rotation2 === 'ccw' && d.y <= 0) {
+                        d.y = 0; d.wallSegment = 'top'; this.setHarvesterWallVelocity(d);
+                    } else if (d.rotation2 === 'cw' && d.y >= H) {
+                        d.y = H; d.wallSegment = 'bottom'; this.setHarvesterWallVelocity(d);
+                    }
+                } else if (d.wallSegment === 'top') {
+                    d.y = 0;
+                    if (d.rotation2 === 'ccw' && d.x >= W) {
+                        d.x = W; d.wallSegment = 'right'; this.setHarvesterWallVelocity(d);
+                    } else if (d.rotation2 === 'cw' && d.x <= 0) {
+                        d.x = 0; d.wallSegment = 'left'; this.setHarvesterWallVelocity(d);
+                    }
+                } else if (d.wallSegment === 'right') {
+                    d.x = W;
+                    if (d.rotation2 === 'ccw' && d.y >= H) {
+                        d.y = H; d.wallSegment = 'bottom'; this.setHarvesterWallVelocity(d);
+                    } else if (d.rotation2 === 'cw' && d.y <= 0) {
+                        d.y = 0; d.wallSegment = 'top'; this.setHarvesterWallVelocity(d);
+                    }
+                }
+            } else if (d.state === 'carrying') {
+                const bx = this.boss?.sprite?.x ?? W / 2;
+                const by = this.boss?.sprite?.y ?? 140;
+                const dx = bx - d.x;
+                const dy = by - d.y;
+                const dist = Math.hypot(dx, dy) || 1;
+                const bossHalf = (this.boss?.data?.size ?? 70) / 2;
+                const droneR = d.spec.radius ?? 14;
+                if (dist < bossHalf + droneR) {
+                    this.onHarvesterReachBoss(d);
+                } else {
+                    d.body.setVelocity((dx / dist) * s, (dy / dist) * s);
+                }
+            }
+
+            if (d.carriedGearVisual && d.carriedGearVisual.active) {
+                d.carriedGearVisual.x = d.x;
+                d.carriedGearVisual.y = d.y - (d.spec.radius ?? 14) - 4;
+            }
+        });
+    }
+
+    setHarvesterWallVelocity(d) {
+        const s = d.moveSpeed;
+        const seg = d.wallSegment;
+        const rot = d.rotation2;
+        if (seg === 'bottom') {
+            d.body.setVelocity(rot === 'ccw' ? -s : s, 0);
+        } else if (seg === 'left') {
+            d.body.setVelocity(0, rot === 'ccw' ? -s : s);
+        } else if (seg === 'top') {
+            d.body.setVelocity(rot === 'ccw' ? s : -s, 0);
+        } else if (seg === 'right') {
+            d.body.setVelocity(0, rot === 'ccw' ? s : -s);
+        }
+    }
+
+    onHarvesterTouchBossBullet(drone, bullet) {
+        if (!drone.active || drone.hp <= 0) return;
+        if (!bullet || !bullet.active || !bullet.isGear) return;
+        if (drone.carryingGear) return;
+        if (drone.state !== 'wallRiding') return;
+
+        drone.carryingGear = true;
+        drone.state = 'carrying';
+        const gearColor = drone.spec.carriedGearColor ?? 0x888888;
+        const gearR = drone.spec.carriedGearRadius ?? 8;
+        const visual = this.add.circle(drone.x, drone.y - (drone.spec.radius ?? 14) - 4, gearR, gearColor);
+        visual.setStrokeStyle(2, 0x555555);
+        drone.carriedGearVisual = visual;
+        drone.once('destroy', () => {
+            if (visual && visual.active) visual.destroy();
+        });
+        bullet.destroy();
+    }
+
+    onHarvesterReachBoss(drone) {
+        if (!drone.active || drone.hp <= 0) return;
+        if (drone.state !== 'carrying') return;
+        const heal = this.boss.maxHp * (drone.healPercent / 100);
+        this.boss.hp = Math.min(this.boss.maxHp, this.boss.hp + heal);
+        this.updateHpBar();
+        if (drone.carriedGearVisual && drone.carriedGearVisual.active) {
+            drone.carriedGearVisual.destroy();
+        }
+        drone.carriedGearVisual = null;
+        drone.carryingGear = false;
+        drone.state = 'descending';
+        drone.wallSegment = null;
+        drone.rotation2 = null;
+        drone.body.setVelocity(0, drone.moveSpeed);
+    }
+
+    onHarvesterHitPlayer(player, drone) {
+        if (!drone.active) return;
+        const time = this.time.now;
+        if (!player.canBeHit(time)) return;
+        player.onHit(time);
+        this.lives -= 1;
+        this.updateUI();
+        if (this.lives <= 0) {
+            this.gameOver = true;
+            this.uiMessage.setText('GAME OVER\nEnter: 다시 도전 / ESC: 메뉴');
+        }
+    }
+
+    onHarvesterShot(drone, bullet) {
+        if (!drone.active || drone.hp <= 0) return;
+        if (bullet.pierce) {
+            const time = this.time.now;
+            const cd = bullet.contactCooldownMs ?? 0;
+            if (time - (bullet.lastHitTargetTime ?? -Infinity) < cd) return;
+            bullet.lastHitTargetTime = time;
+            drone.hp -= bullet.damage ?? 1;
+        } else {
+            drone.hp -= bullet.damage ?? 1;
+            bullet.destroy();
+        }
+        if (drone.hp <= 0) drone.destroy();
+    }
+
+    onHarvesterOrbitHit(drone, orb) {
+        if (!drone.active || drone.hp <= 0) return;
+        const time = this.time.now;
+        if (time - orb.lastHitTargetTime < orb.weaponSpec.contactCooldownMs) return;
+        orb.lastHitTargetTime = time;
+        drone.hp -= orb.weaponSpec.damage;
+        if (drone.hp <= 0) drone.destroy();
+    }
+
+    setTurretSpawnerOverride(override) {
+        if (!this.turretSpawnerSpec) return;
+        this.turretSpawnerSpec = {
+            ...this.turretSpawnerSpec,
+            ...override,
+        };
+    }
+
+    startTurretMotion(spec) {
+        this.turretMotionSpec = spec;
+        this.turretsGroup.children.each((t) => {
+            if (t && t.active && !t.invincible) this.initTurretOrbit(t);
+        });
+    }
+
+    spawnInvincibleTurret(cfg) {
+        const cx = cfg.spawnX ?? GameConfig.GAME_WIDTH / 2;
+        const cy = cfg.spawnY ?? 300;
+        const r = cfg.radius ?? 80;
+        const startAngle = Math.random() * Math.PI * 2;
+        const x = cx + Math.cos(startAngle) * r;
+        const y = cy + Math.sin(startAngle) * r;
+
+        const baseTurret = this.turretSpawnerSpec?.turret ?? {};
+        const turretSpec = { ...baseTurret };
+        const t = this.spawnTurret(x, y, turretSpec);
+        t.invincible = true;
+        t.setFillStyle(cfg.color ?? 0xccccdd);
+        t.setStrokeStyle(3, cfg.strokeColor ?? 0x4488ff);
+        t.setAlpha(1);
+        t.orbitCenterX = cx;
+        t.orbitCenterY = cy;
+        t.orbitAngle = startAngle;
+        t.orbitRadius = r;
+        t.orbitAngularSpeed = cfg.angularSpeedRadPerSec ?? Math.PI / 2;
+        t.orbitGrowRate = 0;
+        return t;
+    }
+
+    startTurretConnections(spec) {
+        this.turretConnectionsSpec = spec;
+        if (!this.turretConnectionsGraphics) {
+            this.turretConnectionsGraphics = this.add.graphics();
+        }
+    }
+
+    updateTurretConnections(time) {
+        const g = this.turretConnectionsGraphics;
+        if (!g) return;
+        g.clear();
+
+        const activeSpec = this.turretConnectionsSpec;
+        const interSpec = (this.currentInterlude?.spec?.type === 'sparkLink')
+            ? this.currentInterlude.spec : null;
+        if (!activeSpec && !interSpec) return;
+
+        const turrets = [];
+        this.turretsGroup.children.each((t) => {
+            if (t && t.active && t.hp > 0) turrets.push(t);
+        });
+        if (turrets.length < 2) return;
+
+        let lineColor;
+        let lineWidth;
+        let alpha;
+        let threshold = null;
+
+        if (activeSpec) {
+            const period = activeSpec.blinkPeriodMs ?? 400;
+            const aMin = activeSpec.alphaMin ?? 0.4;
+            const aMax = activeSpec.alphaMax ?? 1.0;
+            alpha = aMin + (aMax - aMin) * (0.5 + 0.5 * Math.sin(time / period * Math.PI));
+            lineColor = activeSpec.lineColor ?? 0xffdd44;
+            lineWidth = activeSpec.lineWidth ?? 1.5;
+            threshold = activeSpec.damageThreshold ?? 8;
+        } else {
+            const preview = interSpec.previewConnection ?? {};
+            const duration = interSpec.durationMs ?? 5000;
+            const elapsed = time - this.interludeStartTime;
+            const progress = Math.max(0, Math.min(1, elapsed / duration));
+            const aStart = preview.alphaStart ?? 0;
+            const aEnd = preview.alphaEnd ?? 0.5;
+            alpha = aStart + (aEnd - aStart) * progress;
+            lineColor = preview.lineColor ?? 0xffdd44;
+            lineWidth = preview.lineWidth ?? 1.5;
+        }
+
+        g.lineStyle(lineWidth, lineColor, alpha);
+        for (let i = 0; i < turrets.length; i += 1) {
+            for (let j = i + 1; j < turrets.length; j += 1) {
+                g.lineBetween(turrets[i].x, turrets[i].y, turrets[j].x, turrets[j].y);
+            }
+        }
+
+        if (threshold === null) return;
+        const players = [this.player1, this.player2];
+        for (const p of players) {
+            if (!p || p.isInvincible) continue;
+            if (!p.canBeHit(time)) continue;
+            const px = p.sprite.x;
+            const py = p.sprite.y;
+            let hit = false;
+            for (let i = 0; i < turrets.length && !hit; i += 1) {
+                for (let j = i + 1; j < turrets.length && !hit; j += 1) {
+                    const dist = this.pointToSegmentDistance(px, py, turrets[i].x, turrets[i].y, turrets[j].x, turrets[j].y);
+                    if (dist < threshold) hit = true;
+                }
+            }
+            if (hit) {
+                p.onHit(time);
+                this.lives -= 1;
+                this.updateUI();
+                if (this.lives <= 0) {
+                    this.gameOver = true;
+                    this.uiMessage.setText('GAME OVER\nEnter: 다시 도전 / ESC: 메뉴');
+                }
+            }
+        }
+    }
+
+    toggleBotMode() {
+        this.botMode = !this.botMode;
+        if (this.botMode) {
+            this.botOriginalKeys1 = this.player1.keys;
+            this.botOriginalKeys2 = this.player2.keys;
+            this.bot1 = new BotController(this, this.player1, {
+                homeX: GameConfig.GAME_WIDTH * 0.35,
+                homeY: GameConfig.GAME_HEIGHT * 0.55,
+                minPartnerDist: 220,
+            });
+            this.bot2 = new BotController(this, this.player2, {
+                homeX: GameConfig.GAME_WIDTH * 0.65,
+                homeY: GameConfig.GAME_HEIGHT * 0.8,
+                minPartnerDist: 220,
+            });
+            this.bot1.partner = this.player2;
+            this.bot2.partner = this.player1;
+            this.player1.keys = this.bot1.getKeys();
+            this.player2.keys = this.bot2.getKeys();
+            this.botUI.setText('BOT ON');
+        } else {
+            if (this.botOriginalKeys1) this.player1.keys = this.botOriginalKeys1;
+            if (this.botOriginalKeys2) this.player2.keys = this.botOriginalKeys2;
+            this.bot1 = null;
+            this.bot2 = null;
+            this.botUI.setText('');
+            this.botSwapCount = 0;
+            this.botLog = [];
+            this.botDumped = false;
+        }
+    }
+
+    tryBotSwap(time) {
+        if (time - this.botLastSwapTime < this.botSwapCooldownMs) return;
+        const s1 = this.bot1.getStatus();
+        const s2 = this.bot2.getStatus();
+        const b1Danger = !s1.invincible && s1.danger < this.bot1.dangerNow;
+        const b2Danger = !s2.invincible && s2.danger < this.bot2.dangerNow;
+        // 무적 캐릭터 자리 판정 완화: 상대 일반보다 안전하면 스왑 유효
+        const shouldSwapTo1 = b2Danger && s1.danger > s2.danger;
+        const shouldSwapTo2 = b1Danger && s2.danger > s1.danger;
+        if (shouldSwapTo1 || shouldSwapTo2) {
+            this.doSwap();
+            this.botLastSwapTime = time;
+            this.botSwapCount += 1;
+        }
+    }
+
+    logBotFrame(time) {
+        const s1 = this.bot1.getStatus();
+        const s2 = this.bot2.getStatus();
+        const bulletCount = this.bossBullets.countActive() + this.snowflakesGroup.countActive();
+        this.botLog.push({
+            t: Math.round(time),
+            p1: { inv: s1.invincible, danger: Math.round(s1.danger === Infinity ? 9999 : s1.danger), x: Math.round(s1.x), y: Math.round(s1.y) },
+            p2: { inv: s2.invincible, danger: Math.round(s2.danger === Infinity ? 9999 : s2.danger), x: Math.round(s2.x), y: Math.round(s2.y) },
+            lives: this.lives,
+            bullets: bulletCount,
+            bossHp: Math.round(this.boss.hp),
+            phase: this.boss.phaseIndex,
+        });
+        if (this.botLog.length > this.botLogMaxFrames) this.botLog.shift();
+    }
+
+    dumpBotLog(time) {
+        const bossName = this.boss.data.name;
+        const lv = this.bossLevel;
+        console.log(`=== BOT 사망 로그 [${bossName} Lv${lv}] ===`);
+        console.log(`사망 시각 ${Math.round(time)}, 총 스왑 ${this.botSwapCount}회`);
+        console.log(`최근 ${this.botLog.length} 프레임:`);
+        console.table(this.botLog.slice(-60).map((f) => ({
+            t: f.t,
+            phase: f.phase,
+            bossHp: f.bossHp,
+            bullets: f.bullets,
+            lives: f.lives,
+            p1: `${f.p1.inv ? '무' : '일'} ${f.p1.danger}ms (${f.p1.x},${f.p1.y})`,
+            p2: `${f.p2.inv ? '무' : '일'} ${f.p2.danger}ms (${f.p2.x},${f.p2.y})`,
+        })));
+        console.log('전체 로그:', JSON.stringify(this.botLog));
+    }
+
+    updateBotUI() {
+        const s1 = this.bot1.getStatus();
+        const s2 = this.bot2.getStatus();
+        const fmt = (v) => (v === Infinity ? 'safe' : `${Math.round(v)}ms`);
+        const tag = (s) => (s.invincible ? '무적' : '일반');
+        const lines = [
+            `BOT ON`,
+            `P1[${tag(s1)}] ${fmt(s1.danger)}`,
+            `P2[${tag(s2)}] ${fmt(s2.danger)}`,
+            `swaps: ${this.botSwapCount}`,
+        ];
+        this.botUI.setText(lines.join('\n'));
+    }
+
+    pointToSegmentDistance(px, py, x1, y1, x2, y2) {
+        const dx = x2 - x1;
+        const dy = y2 - y1;
+        const len2 = dx * dx + dy * dy;
+        if (len2 < 0.0001) return Math.hypot(px - x1, py - y1);
+        let t = ((px - x1) * dx + (py - y1) * dy) / len2;
+        t = Math.max(0, Math.min(1, t));
+        const cx = x1 + t * dx;
+        const cy = y1 + t * dy;
+        return Math.hypot(px - cx, py - cy);
     }
 }

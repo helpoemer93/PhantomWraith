@@ -81,12 +81,12 @@ const GuguData = {
     },
     phases: [
         {
-            hpEnter: 600,
+            hpEnterRatio: 1.0,
             interludeOnExit: 'bird_burst',
             sequence: GuguPhase1Sequence,
         },
         {
-            hpEnter: 400,
+            hpEnterRatio: 2 / 3,
             interludeOnExit: 'bird_burst',
             endpointDecelSpiral: {
                 triggerCount: 1,
@@ -100,7 +100,7 @@ const GuguData = {
             },
         },
         {
-            hpEnter: 200,
+            hpEnterRatio: 1 / 3,
             sequence: GuguPhase1Sequence,
             baseAttack: {
                 intervalMs: 500,
@@ -136,7 +136,8 @@ const Gugu = {
     buildLevelData(level) {
         const d = JSON.parse(JSON.stringify(GuguData));
         const lv = Math.max(1, level);
-        d.maxHp = Math.round(d.maxHp * Math.pow(1.25, lv - 1));
+        const scale = Math.pow(1.25, lv - 1);
+        d.maxHp = Math.round(d.maxHp * scale);
 
         if (lv >= 2) {
             // 궤도미사일 개수 +5 (10→15)

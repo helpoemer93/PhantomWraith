@@ -53,6 +53,21 @@ class Boss {
         if (phase.suicideDroneSpawner && this.scene.startSuicideDroneSpawner) {
             this.scene.startSuicideDroneSpawner(phase.suicideDroneSpawner);
         }
+        if (phase.harvesterDroneSpawner && this.scene.startHarvesterDroneSpawner) {
+            this.scene.startHarvesterDroneSpawner(phase.harvesterDroneSpawner);
+        }
+        if (phase.turretSpawnerOverride && this.scene.setTurretSpawnerOverride) {
+            this.scene.setTurretSpawnerOverride(phase.turretSpawnerOverride);
+        }
+        if (phase.turretMotion && this.scene.startTurretMotion) {
+            this.scene.startTurretMotion(phase.turretMotion);
+        }
+        if (phase.invincibleTurret && this.scene.spawnInvincibleTurret) {
+            this.scene.spawnInvincibleTurret(phase.invincibleTurret);
+        }
+        if (phase.turretConnections && this.scene.startTurretConnections) {
+            this.scene.startTurretConnections(phase.turretConnections);
+        }
         if (phase.sequence) {
             const reused = prevPatterns.find(
                 (p) => p instanceof Sequence && p.spec === phase.sequence && !p.done,
@@ -101,7 +116,8 @@ class Boss {
         if (this.phaseIndex >= 0) {
             if (this.pendingNextPhase === null) {
                 const nextPhase = this.data.phases[this.phaseIndex + 1];
-                if (nextPhase && this.hp <= nextPhase.hpEnter) {
+                const threshold = nextPhase ? this.maxHp * nextPhase.hpEnterRatio : null;
+                if (nextPhase && this.hp <= threshold) {
                     this.pendingNextPhase = this.phaseIndex + 1;
                     this.pendingStartTime = time;
                     const currPhase = this.data.phases[this.phaseIndex];

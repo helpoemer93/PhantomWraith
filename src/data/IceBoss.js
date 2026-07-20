@@ -9,7 +9,7 @@ const IceBossData = {
     movement: { type: 'fixed' },
     phases: [
         {
-            hpEnter: 600,
+            hpEnterRatio: 1.0,
             interludeOnExit: 'snowflake_burst',
             sequence: {
                 loop: true,
@@ -53,7 +53,7 @@ const IceBossData = {
             },
         },
         {
-            hpEnter: 400,
+            hpEnterRatio: 2 / 3,
             interludeOnExit: 'snowflake_burst',
             resetSideDirection: true,
             clouds: {
@@ -121,7 +121,7 @@ const IceBossData = {
             },
         },
         {
-            hpEnter: 200,
+            hpEnterRatio: 1 / 3,
             resetSideDirection: true,
             clouds: {
                 items: [
@@ -309,7 +309,8 @@ const IceBoss = {
     buildLevelData(level) {
         const d = JSON.parse(JSON.stringify(IceBossData));
         const lv = Math.max(1, level);
-        d.maxHp = Math.round(d.maxHp * Math.pow(1.25, lv - 1));
+        const scale = Math.pow(1.25, lv - 1);
+        d.maxHp = Math.round(d.maxHp * scale);
 
         if (lv >= 2) {
             // 구름 2→3, 텔레포트 주기(540px) 고려 균등 분배 (startX 180 간격)
