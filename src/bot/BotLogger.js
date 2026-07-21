@@ -142,6 +142,20 @@ class BotLogger {
         console.table(s.원인별랭킹);
         return s;
     }
+
+    // 한 줄 요약. 복사·붙여넣기용. copy() 로 감싸면 클립보드로 들어감.
+    shortStats(opts = {}) {
+        const s = this.stats(opts);
+        const tag = [];
+        if (opts.bossName) tag.push(opts.bossName);
+        if (opts.bossLv) tag.push(`Lv${opts.bossLv}`);
+        const label = tag.length ? tag.join(' ') : '전체';
+        const abortPart = s.중단 ? `/A${s.중단}` : '';
+        const top3 = s.원인별랭킹.slice(0, 3)
+            .map((r) => `${r.원인}(${r.판당평균})`)
+            .join(', ');
+        return `${label} | ${s.총러닝수}판 W${s.승}/L${s.패}${abortPart} | 판당 피격 ${s.판당평균피격} | 평균 ${s.평균러닝시간초}s | top: ${top3 || '없음'}`;
+    }
 }
 
 // 스크립트 로드 즉시 콘솔 명령 등록. GameScene 진입 여부와 무관하게 사용 가능.
@@ -151,4 +165,10 @@ if (typeof window !== 'undefined') {
     }
     window.botStats = (opts) => window.__botLoggerInstance.printStats(opts);
     window.botStatsReset = () => window.__botLoggerInstance.reset();
+    // 한 줄 요약. `copy(botStatsShort({...}))` 로 클립보드 복사.
+    window.botStatsShort = (opts) => {
+        const line = window.__botLoggerInstance.shortStats(opts);
+        console.log(line);
+        return line;
+    };
 }

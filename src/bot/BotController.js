@@ -248,7 +248,9 @@ class BotController {
                     ty += (dyP / d) * 60;
                 }
             }
-            this.moveTowards(px, py, tx, ty);
+            // 안전 모드 방향 스코어링: 경로 위험 셀 사전 회피.
+            // 목표 진행도 + val 이차 페널티 + 벽/파트너 페널티 종합.
+            this.moveTowardsSafely(time, px, py, tx, ty, partnerX, partnerY);
             return;
         }
 
@@ -296,6 +298,56 @@ class BotController {
         this.lastDx = bestDx;
         this.lastDy = bestDy;
         this.lastDecisionAt = time;
+    }
+
+    // 안전 모드용 방향 스코어링 이동. 경로 상 위험 셀 사전 회피.
+    // moveTowards는 val 무시 직진이라 val<dangerSafe 셀에 태연히 진입 → Lv5 사망 원인.
+    // 여기서는 9방향(정지 포함) 후보 각각을 (진행도 - danger 페널티) 로 평가.
+    moveTowardsSafely(time, px, py, tx, ty, partnerX, partnerY) {
+        const dm = this.scene.dangerMap;
+        const step = dm.cellSize;
+        const currDist = Math.hypot(tx - px, ty - py);
+        const candidates = [
+            [0, 0],
+            [-1, -1], [0, -1], [1, -1],
+            [-1, 0], [1, 0],
+            [-1, 1], [0, 1], [1, 1],
+        ];
+        let bestScore = -Infinity;
+        let bestDx = 0;
+        let bestDy = 0;
+        for (const [dx, dy] of candidates) {
+            const nx = px + dx * step;
+            const ny = py + dy * step;
+            const val = dm.getArrivalInRadius(nx, ny, this.hitRadius);
+            // val 이차 페널티: val=dangerSafe → 0, val=0 → -500
+            let dangerPen = 0;
+            if (val !== Infinity && val < this.dangerSafe) {
+                const ratio = (this.dangerSafe - val) / this.dangerSafe;
+                dangerPen = -ratio * ratio * 500;
+            }
+            // 진행도: step 크기 20이라 최대 ±20 수준. 계수 1.5로 완만하게.
+            const newDist = Math.hypot(tx - nx, ty - ny);
+            const progress = (currDist - newDist) * 1.5;
+            // 벽·파트너·관성
+            const wallPen = this.wallPenalty(nx, ny);
+            let partnerPen = 0;
+            if (partnerX !== null) {
+                const pd = Math.hypot(nx - partnerX, ny - partnerY);
+                if (pd < this.minPartnerDist) partnerPen = -(this.minPartnerDist - pd) * 1.5;
+            }
+            let inertia = 0;
+            if (dx === this.lastDx && dy === this.lastDy && (dx !== 0 || dy !== 0)) inertia = 15;
+            const score = progress + dangerPen + wallPen + partnerPen + inertia;
+            if (score > bestScore) {
+                bestScore = score;
+                bestDx = dx;
+                bestDy = dy;
+            }
+        }
+        this.setKeys(bestDx, bestDy);
+        this.lastDx = bestDx;
+        this.lastDy = bestDy;
     }
 
     moveTowards(px, py, tx, ty) {
