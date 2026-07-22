@@ -75,6 +75,7 @@ const SuicuneData = {
             // 정식 페이즈 3: 소사이클(돌진 → 파도 90발 → 물대포×3) × 3 → 그랜드(중앙 돌진 → 파도 9연발) → 상단 복귀 → 반복.
             suicunePhase3: {
                 subCyclesPerGrand: 3,        // 소사이클 3회 뒤 그랜드
+                subCycleDelayMs: 700,        // 물대포 마지막 발사 → 다음 조준까지 딜링 창
                 // 소사이클 돌진 (기존과 동일 규칙)
                 aimIntervalMs: 1000,
                 warnColor: 0xff2222,         // 붉은 경고선 (돌진)
@@ -110,7 +111,7 @@ const SuicuneData = {
                     beamAfterColor: 0x88ccff,// 밝은 하늘색
                     // 발사 시 벽 접점에서 물방울 확산탄 스폰 (벽 반대편 180도 부채꼴).
                     droplet: {
-                        bulletCount: 6,
+                        bulletCount: 5,
                         spreadDeg: 90,       // ±90도 = 180도 반원
                         speedMin: 200,
                         speedMax: 320,
@@ -238,44 +239,56 @@ const Suicune = {
         const lv = Math.max(1, level);
         const scale = Math.pow(1.20, lv - 1);
         d.maxHp = Math.round(d.maxHp * scale);
-        // 라이코 자체는 스이쿤 몸통 HP 공유라 별도 HP 스케일 없음.
-        // 레벨업 시 라이코 돌진 주기 단축 · 파도미사일 개수·속도 조정 등은 추후.
+
+        // 모든 파도미사일 spec (페이즈·인터루드 통틀어) 순회용
+        const forEachWaveMissile = (fn) => {
+            for (const phase of d.phases) {
+                if (phase.raikouSpawner?.waveMissile) fn(phase.raikouSpawner.waveMissile);
+                if (phase.suicunePhase3?.waveMissile) fn(phase.suicunePhase3.waveMissile);
+            }
+            for (const inter of (d.interludes ?? [])) {
+                if (inter.spec?.waveBurst?.missile) fn(inter.spec.waveBurst.missile);
+                if (inter.spec?.entei?.waveMissile) fn(inter.spec.entei.waveMissile);
+            }
+        };
+        // 모든 aim 시간 spec 순회용 (Lv5 돌진 경고)
+        const forEachAim = (fn) => {
+            for (const phase of d.phases) {
+                if (phase.raikouSpawner?.raikou) fn(phase.raikouSpawner.raikou, 'aimIntervalMs');
+                if (phase.suicunePhase3) fn(phase.suicunePhase3, 'aimIntervalMs');
+                if (phase.suicunePhase3?.grand) fn(phase.suicunePhase3.grand, 'aimIntervalMs');
+            }
+            for (const inter of (d.interludes ?? [])) {
+                if (inter.spec?.entei) fn(inter.spec.entei, 'aimIntervalMs');
+            }
+        };
+
+        // Lv2: 번개미사일 5→7, spreadDeg 60→90 (라이코 원뿔 확장)
         if (lv >= 2) {
             for (const phase of d.phases) {
-                if (phase.raikouSpawner?.raikou) {
-                    phase.raikouSpawner.raikou.aimIntervalMs = Math.round(
-                        phase.raikouSpawner.raikou.aimIntervalMs * 0.9
-                    );
+                if (phase.raikouSpawner?.lightningMissile) {
+                    phase.raikouSpawner.lightningMissile.bulletCount = 7;
+                    phase.raikouSpawner.lightningMissile.spreadDeg = 90;
                 }
             }
         }
+        // Lv3: 화방 폭 8→10도, 미사일 30→38 (엔테이 화염방사)
         if (lv >= 3) {
-            for (const phase of d.phases) {
-                if (phase.raikouSpawner?.waveMissile) {
-                    phase.raikouSpawner.waveMissile.a = Math.round(
-                        phase.raikouSpawner.waveMissile.a * 1.15
-                    );
+            for (const inter of (d.interludes ?? [])) {
+                const flame = inter.spec?.entei?.flamethrower;
+                if (flame) {
+                    flame.spreadDeg = 10;
+                    flame.bulletCount = 38;
                 }
             }
         }
+        // Lv4: 파도미사일 진폭 (sin계수) 2→2.4
         if (lv >= 4) {
-            for (const phase of d.phases) {
-                if (phase.raikouSpawner?.raikou) {
-                    phase.raikouSpawner.raikou.chargesPerCycle = 5;
-                }
-            }
+            forEachWaveMissile((w) => { w.waveCoef = 2.4; });
         }
+        // Lv5: 모든 돌진 조준 시간 1000→700ms
         if (lv >= 5) {
-            for (const phase of d.phases) {
-                if (phase.raikouSpawner?.raikou) {
-                    phase.raikouSpawner.raikou.aimIntervalMs = Math.round(
-                        phase.raikouSpawner.raikou.aimIntervalMs * 0.85
-                    );
-                }
-                if (phase.raikouSpawner?.waveMissile) {
-                    phase.raikouSpawner.waveMissile.periodSec *= 0.75; // 파도 더 빠름
-                }
-            }
+            forEachAim((obj, key) => { obj[key] = 700; });
         }
         return d;
     },
@@ -283,10 +296,10 @@ const Suicune = {
     getLevelUpLabels(level) {
         if (level <= 1) return [];
         const labels = ['HP +25%'];
-        if (level === 2) labels.push('라이코 사이클 -10%');
-        else if (level === 3) labels.push('파도미사일 속도 +15%');
-        else if (level === 4) labels.push('라이코 돌진 4→5회');
-        else if (level === 5) labels.push('라이코 사이클 추가 -15%, 파도 주기 -25%');
+        if (level === 2) labels.push('번개 5→7발, 원뿔 확장');
+        else if (level === 3) labels.push('화염방사 폭 25%, 개수 30→38');
+        else if (level === 4) labels.push('파도 진폭 1.2배');
+        else if (level === 5) labels.push('모든 돌진 경고 1s→0.7s');
         return labels;
     },
 };

@@ -147,6 +147,27 @@ const BulletPredictor = {
         return out;
     },
 
+    // 파도미사일: 방향(waveDx, waveDy) 고정, 속도 v(t) = a·(1 + c·sin(2π·t/T)).
+    // 위치 = 시작위치 + 방향 · integral(v). 현재 x/y는 physics 누적이므로 (미래 적분 - 현재 적분) 차이를 더함.
+    predictWaveMissile(bullet, times, sceneTime) {
+        const dx = bullet.waveDx;
+        const dy = bullet.waveDy;
+        const a = bullet.waveA;
+        const c = bullet.waveCoef ?? 2;
+        const T = bullet.wavePeriodSec || 1.0;
+        const elapsedNowSec = (sceneTime - bullet.waveStartTime) / 1000;
+        // ∫ a·(1 + c·sin(2π·τ/T)) dτ from 0 to t  =  a·t + a·c·(T/(2π))·(1 - cos(2π·t/T))
+        const integralOf = (t) => a * t + a * c * (T / (2 * Math.PI)) * (1 - Math.cos((2 * Math.PI * t) / T));
+        const nowIntegral = integralOf(elapsedNowSec);
+        const out = [];
+        for (const t of times) {
+            const s = t / 1000;
+            const dDist = integralOf(elapsedNowSec + s) - nowIntegral;
+            out.push({ x: bullet.x + dx * dDist, y: bullet.y + dy * dDist, t });
+        }
+        return out;
+    },
+
     // 총알의 유효 반경(판정용). Phaser 총알에 명시적 radius가 있으면 그거, 없으면 기본값.
     getRadius(bullet, fallback = 6) {
         if (bullet.body && bullet.body.radius) return bullet.body.radius;
@@ -164,6 +185,9 @@ const BulletPredictor = {
         }
         if (bullet.hasWavyMotion) {
             return this.predictWavy(bullet, times, sceneTime);
+        }
+        if (bullet.isWaveMissile) {
+            return this.predictWaveMissile(bullet, times, sceneTime);
         }
         return this.predictLinear(bullet, times);
     },

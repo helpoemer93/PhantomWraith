@@ -303,6 +303,21 @@ class GameScene extends Phaser.Scene {
                     default: 250,
                 });
             });
+            // 스이쿤 페이즈 1/2: 라이코·엔테이 몸통 접촉 회피
+            if (this.raikou && this.raikou.active) {
+                const rr = (this.raikou.body?.radius ?? 18) + 15;
+                staticHazards.push({
+                    x: this.raikou.x, y: this.raikou.y,
+                    radius: rr, arrivalTime: 0,
+                });
+            }
+            if (this.entei && this.entei.active && this.entei.state && this.entei.state !== 'entering') {
+                const rr = (this.entei.body?.radius ?? 18) + 15;
+                staticHazards.push({
+                    x: this.entei.x, y: this.entei.y,
+                    radius: rr, arrivalTime: 0,
+                });
+            }
             // 포탑 연결선(페이즈 3): 살아있는 포탑 완전그래프 세그먼트를 위험선으로
             const lineHazards = [];
             if (this.turretConnectionsSpec) {
@@ -322,6 +337,63 @@ class GameScene extends Phaser.Scene {
                                 radius: lineRadius, arrivalTime: lineArrival,
                             });
                         }
+                    }
+                }
+            }
+            // 스이쿤 조준 경고선을 위험선으로. arrival = 발사 시점까지 남은 시간.
+            if (this.raikou && this.raikou.active && this.raikou.state === 'aiming' && this.raikou.aimComputed) {
+                const r = this.raikou;
+                const remain = Math.max(0, (r.spec?.aimIntervalMs ?? 1000) - (time - r.stateStartTime));
+                lineHazards.push({
+                    x1: r.x, y1: r.y,
+                    x2: r.aimEndX, y2: r.aimEndY,
+                    radius: (r.spec?.radius ?? 18) + 8,
+                    arrivalTime: remain,
+                });
+            }
+            if (this.entei && this.entei.active && this.entei.state === 'aiming' && this.entei.aimComputed) {
+                const e = this.entei;
+                const remain = Math.max(0, (e.spec?.aimIntervalMs ?? 1000) - (time - e.stateStartTime));
+                lineHazards.push({
+                    x1: e.x, y1: e.y,
+                    x2: e.aimEndX, y2: e.aimEndY,
+                    radius: (e.spec?.radius ?? 18) + 8,
+                    arrivalTime: remain,
+                });
+            }
+            if (this.suicunePhase3State && this.suicunePhase3Spec && this.boss && this.boss.sprite) {
+                const st = this.suicunePhase3State;
+                const spec = this.suicunePhase3Spec;
+                const b = this.boss.sprite;
+                if (st.stage === 'aim' && st.aimComputed) {
+                    const remain = Math.max(0, (spec.aimIntervalMs ?? 1000) - (time - st.stateStartTime));
+                    lineHazards.push({
+                        x1: b.x, y1: b.y,
+                        x2: st.aimEndX, y2: st.aimEndY,
+                        radius: (spec.bodySize ?? 44) / 2 + 8,
+                        arrivalTime: remain,
+                    });
+                } else if (st.stage === 'grandAim' && st.aimComputed) {
+                    const grand = spec.grand ?? {};
+                    const remain = Math.max(0, (grand.aimIntervalMs ?? spec.aimIntervalMs ?? 1000) - (time - st.stateStartTime));
+                    lineHazards.push({
+                        x1: b.x, y1: b.y,
+                        x2: st.aimEndX, y2: st.aimEndY,
+                        radius: (spec.bodySize ?? 44) / 2 + 8,
+                        arrivalTime: remain,
+                    });
+                } else if (st.stage === 'water') {
+                    const wc = spec.waterCannon ?? {};
+                    const halfW = (wc.beamWidth ?? 24) / 2 + 8;
+                    for (const shot of st.waterShots) {
+                        if (shot.fired) continue;
+                        const remain = Math.max(0, shot.fireAt - time);
+                        lineHazards.push({
+                            x1: shot.originX, y1: shot.originY,
+                            x2: shot.endX, y2: shot.endY,
+                            radius: halfW,
+                            arrivalTime: remain,
+                        });
                     }
                 }
             }
@@ -2423,6 +2495,11 @@ class GameScene extends Phaser.Scene {
         if (b.decelerating) return 'decelerating';
         if (b.isBird) return 'bird';
         if (b.isSnowflake) return 'snowflake';
+        // 스이쿤 계열 (isTriangle보다 우선 — 번개미사일은 isTriangle 겸함)
+        if (b.isWaveMissile) return 'waveMissile';
+        if (b.isLightningMissile) return 'lightningMissile';
+        if (b.isWaterDroplet) return 'waterDroplet';
+        if (b.isFlame) return 'flame';
         if (b.isTriangle) return 'triangle';
         return 'linear';
     }
@@ -2885,6 +2962,7 @@ class GameScene extends Phaser.Scene {
                 bullet.setStrokeStyle(1, spec.strokeColor);
             }
             bullet.damage = spec.damage ?? 1;
+            bullet.isFlame = true;
         }
     }
 
@@ -3135,6 +3213,7 @@ class GameScene extends Phaser.Scene {
             bullet.waveDx = dx;
             bullet.waveDy = dy;
             bullet.waveA = a;
+            bullet.waveCoef = spec.waveCoef ?? 2;
             bullet.wavePeriodSec = spec.periodSec ?? 1.0;
             bullet.waveStartTime = time;
             bullet.waveExpireAt = time + (spec.lifespanMs ?? 8000);
@@ -3147,8 +3226,9 @@ class GameScene extends Phaser.Scene {
             if (!b || !b.isWaveMissile || !b.active) return;
             if (time > b.waveExpireAt) { b.destroy(); return; }
             const period = b.wavePeriodSec || 1.0;
+            const coef = b.waveCoef ?? 2;
             const tSec = (time - b.waveStartTime) / 1000;
-            const v = b.waveA * (1 + 2 * Math.sin((2 * Math.PI * tSec) / period));
+            const v = b.waveA * (1 + coef * Math.sin((2 * Math.PI * tSec) / period));
             b.body.setVelocity(b.waveDx * v, b.waveDy * v);
         });
     }
@@ -3314,11 +3394,17 @@ class GameScene extends Phaser.Scene {
             }
             if (s.waterAimStarted >= targetCount && s.waterFired >= targetCount) {
                 s.subCycleCount += 1;
+                s.stage = 'subCycleGap';
+                s.stateStartTime = time;
+            }
+        } else if (s.stage === 'subCycleGap') {
+            // 물대포 마지막 발사 후 짧은 딜링 창. 이 상태에서 스이쿤은 정지.
+            const delay = spec.subCycleDelayMs ?? 700;
+            if (time - s.stateStartTime >= delay) {
                 if (s.subCycleCount >= (spec.subCyclesPerGrand ?? 3)) {
                     s.subCycleCount = 0;
                     s.stage = 'grandAim';
                     s.stateStartTime = time;
-                    // 중앙 경고선 고정 (캐릭터 위치 무관)
                     const cx = GameConfig.GAME_WIDTH / 2;
                     const cy = GameConfig.GAME_HEIGHT / 2;
                     const dx = cx - b.x;
@@ -3504,6 +3590,7 @@ class GameScene extends Phaser.Scene {
                 bullet.setStrokeStyle(1, spec.strokeColor);
             }
             bullet.damage = spec.damage ?? 1;
+            bullet.isWaterDroplet = true;
         }
     }
 

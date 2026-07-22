@@ -2517,6 +2517,7 @@ class PatternLabScene extends Phaser.Scene {
             bullet.waveDx = dx;
             bullet.waveDy = dy;
             bullet.waveA = a;
+            bullet.waveCoef = spec.waveCoef ?? 2;
             bullet.wavePeriodSec = spec.periodSec ?? 1.0;
             bullet.waveStartTime = time;
             bullet.waveExpireAt = time + (spec.lifespanMs ?? 8000);
@@ -2529,8 +2530,9 @@ class PatternLabScene extends Phaser.Scene {
             if (!b || !b.isWaveMissile || !b.active) return;
             if (time > b.waveExpireAt) { b.destroy(); return; }
             const period = b.wavePeriodSec || 1.0;
+            const coef = b.waveCoef ?? 2;
             const tSec = (time - b.waveStartTime) / 1000;
-            const v = b.waveA * (1 + 2 * Math.sin((2 * Math.PI * tSec) / period));
+            const v = b.waveA * (1 + coef * Math.sin((2 * Math.PI * tSec) / period));
             b.body.setVelocity(b.waveDx * v, b.waveDy * v);
         });
     }
@@ -2890,6 +2892,7 @@ class PatternLabScene extends Phaser.Scene {
                 bullet.setStrokeStyle(1, spec.strokeColor);
             }
             bullet.damage = spec.damage ?? 1;
+            bullet.isFlame = true;
         }
     }
 
@@ -2998,6 +3001,12 @@ class PatternLabScene extends Phaser.Scene {
             }
             if (s.waterAimStarted >= targetCount && s.waterFired >= targetCount) {
                 s.subCycleCount += 1;
+                s.stage = 'subCycleGap';
+                s.stateStartTime = time;
+            }
+        } else if (s.stage === 'subCycleGap') {
+            const delay = spec.subCycleDelayMs ?? 700;
+            if (time - s.stateStartTime >= delay) {
                 if (s.subCycleCount >= (spec.subCyclesPerGrand ?? 3)) {
                     s.subCycleCount = 0;
                     s.stage = 'grandAim';
@@ -3173,6 +3182,7 @@ class PatternLabScene extends Phaser.Scene {
                 bullet.setStrokeStyle(1, spec.strokeColor);
             }
             bullet.damage = spec.damage ?? 1;
+            bullet.isWaterDroplet = true;
         }
     }
 
