@@ -36,57 +36,59 @@ class BotController {
 
     // 딜링 위치 보너스: 위협 드론 > 보스 > 포탑 우선순위로 x정렬 시 가산점.
     // 캐리 드론은 회수 저지 목적으로 최우선. 자폭드론 charging은 회피 대상이라 격추 시도 X.
+    // alignRange는 각 대상 반경 + 플레이어 총알 폭(≈3~5) 기준 실제 명중 범위에 맞춤.
+    // dx=0에서 최대 보너스는 이전과 동일하게 유지 (weight 상향으로 보정).
     aimBonus(x, y) {
         let bonus = 0;
-        // 채취드론(캐리 걷어치우는 게 클리어 조건)
+        // 채취드론 (r=14, 명중 dx<18): alignRange 20
         const harvesters = this.scene.harvesterDronesGroup;
         if (harvesters) {
             harvesters.children.each((d) => {
                 if (!d || !d.active || d.hp <= 0) return;
                 const dx = Math.abs(x - d.x);
-                const alignRange = 40;
+                const alignRange = 20;
                 if (dx >= alignRange || y <= d.y + 30) return;
                 let weight = 0;
-                if (d.state === 'carrying') weight = 6;        // 최우선. 최대 +240
-                else if (d.state === 'wallRiding') weight = 4; // 최대 +160
-                else if (d.state === 'descending') weight = 3.5; // 최대 +140
+                if (d.state === 'carrying') weight = 12;        // 최우선. 최대 +240
+                else if (d.state === 'wallRiding') weight = 8;  // 최대 +160
+                else if (d.state === 'descending') weight = 7;  // 최대 +140
                 bonus += (alignRange - dx) * weight;
             });
         }
-        // 자폭드론
+        // 자폭드론 (r=15, 명중 dx<20): alignRange 20
         const suicides = this.scene.suicideDronesGroup;
         if (suicides) {
             suicides.children.each((d) => {
                 if (!d || !d.active || d.hp <= 0) return;
                 if (d.state === 'charging') return;
                 const dx = Math.abs(x - d.x);
-                const alignRange = 40;
+                const alignRange = 20;
                 if (dx >= alignRange || y <= d.y + 30) return;
                 let weight = 0;
-                if (d.state === 'orbiting') weight = 4;      // 최대 +160
-                else if (d.state === 'approaching') weight = 3.5;
-                else if (d.state === 'paused') weight = 3;
+                if (d.state === 'orbiting') weight = 8;      // 최대 +160
+                else if (d.state === 'approaching') weight = 7; // 최대 +140
+                else if (d.state === 'paused') weight = 6;   // 최대 +120
                 bonus += (alignRange - dx) * weight;
             });
         }
-        // 보스
+        // 보스 (메타 r=22, 명중 dx<25): alignRange 25
         const boss = this.scene.boss;
         if (boss && boss.sprite && boss.sprite.active && !boss.isDead()) {
             const dxBoss = Math.abs(x - boss.sprite.x);
-            const alignRange = 40;
+            const alignRange = 25;
             if (dxBoss < alignRange && y > boss.sprite.y + 50) {
-                bonus += (alignRange - dxBoss) * 4; // 최대 +160
+                bonus += (alignRange - dxBoss) * 6.4; // 최대 +160
             }
         }
-        // 포탑
+        // 포탑 (r=12, 명중 dx<15): alignRange 15
         const turrets = this.scene.turretsGroup;
         if (turrets) {
             turrets.children.each((t) => {
                 if (!t || !t.active || t.hp <= 0 || t.invincible) return;
                 const dx = Math.abs(x - t.x);
-                const alignRange = 30;
+                const alignRange = 15;
                 if (dx < alignRange && y > t.y + 30) {
-                    bonus += (alignRange - dx) * 1.5; // 최대 +45
+                    bonus += (alignRange - dx) * 3; // 최대 +45
                 }
             });
         }
