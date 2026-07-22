@@ -7,7 +7,7 @@ const SuicuneData = {
     id: 'suicune',
     name: '스이쿤',
     rewardWeapon: 'homing',
-    maxHp: 500,
+    maxHp: 450,
     size: 44, // 반경 22
     color: 0x88aacc,
     startY: 140,
@@ -68,6 +68,7 @@ const SuicuneData = {
             hpEnterRatio: 2 / 3,
             // TODO: 엔테이 패턴. 현재는 진입만 되도록 빈 페이즈.
             enteiStub: true,
+            interludeOnExit: 'converging_waves',
         },
         {
             hpEnterRatio: 1 / 3,
@@ -192,6 +193,28 @@ const SuicuneData = {
                     },
                     // 복귀 시 스이쿤 위치에서 파도미사일 (페이즈1과 동일 스펙)
                     waveMissile: {
+                        bulletCount: 90,
+                        radius: 6,
+                        color: 0x66ccff,
+                        strokeColor: 0x2266aa,
+                        a: 100,
+                        periodSec: 1.0,
+                        lifespanMs: 8000,
+                        damage: 1,
+                    },
+                },
+            },
+        },
+        {
+            name: 'converging_waves',
+            spec: {
+                type: 'convergingWaves',
+                durationMs: 5000,            // Boss.phaseTransitionMs 와 sync
+                slideMs: 3000,               // 스이쿤 슬라이딩 시간 (완료 후 파도 시작)
+                waveBurst: {
+                    count: 9,
+                    intervalMs: 200,
+                    missile: {
                         bulletCount: 90,
                         radius: 6,
                         color: 0x66ccff,
