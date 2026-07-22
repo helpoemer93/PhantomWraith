@@ -56,6 +56,15 @@ class Boss {
         if (phase.harvesterDroneSpawner && this.scene.startHarvesterDroneSpawner) {
             this.scene.startHarvesterDroneSpawner(phase.harvesterDroneSpawner);
         }
+        if (phase.raikouSpawner && this.scene.startRaikouSpawner) {
+            this.scene.startRaikouSpawner(phase.raikouSpawner);
+        }
+        if (phase.enteiStub && this.scene.enterEnteiStubPhase) {
+            this.scene.enterEnteiStubPhase();
+        }
+        if (phase.suicunePhase3 && this.scene.enterSuicunePhase3) {
+            this.scene.enterSuicunePhase3(phase.suicunePhase3);
+        }
         if (phase.turretSpawnerOverride && this.scene.setTurretSpawnerOverride) {
             this.scene.setTurretSpawnerOverride(phase.turretSpawnerOverride);
         }

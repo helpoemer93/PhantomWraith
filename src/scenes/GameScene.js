@@ -34,6 +34,20 @@ class GameScene extends Phaser.Scene {
         this.suicideDroneSpawnLastTime = null;
         this.harvesterDronesGroup = this.physics.add.group();
         this.harvesterDroneSpawnerSpec = null;
+        // 스이쿤 페이즈 1 라이코 관련 상태 (라이코는 항상 1개체).
+        this.raikou = null;
+        this.raikouSpec = null;
+        this.leashSpec = null;
+        this.waveMissileSpec = null;
+        this.raikouOverlayGraphics = null;
+        this.leashGraphics = null;
+        this.raikouAfterimages = [];
+        // 스이쿤 페이즈 3 상태 (씬 재시작 시 이전 게임 상태가 남아 다음 게임 페이즈 1에 페이즈 3 로직이 함께 도는 버그 방지).
+        this.suicunePhase3State = null;
+        this.suicunePhase3Spec = null;
+        this.suicuneOverlayGraphics = null;
+        this.entei = null;
+        this.roaringWaves = null;
         this.turretConnectionsSpec = null;
         this.turretConnectionsGraphics = null;
         this.turretMotionSpec = null;
@@ -377,6 +391,12 @@ class GameScene extends Phaser.Scene {
         this.updateSuicideDrones(time, delta);
         this.updateHarvesterDrones(time, delta);
         this.updateTurretConnections(time);
+        this.updateRaikou(time, delta);
+        this.updateWaveMissiles(time);
+        this.updateLightningMissiles(time);
+        this.updateRoaringWaves(time);
+        this.updateEntei(time, delta);
+        this.updateSuicunePhase3(time, delta);
 
         this.playerBullets.children.each((b) => {
             if (!b) return;
@@ -1195,6 +1215,13 @@ class GameScene extends Phaser.Scene {
             this.interludeFrozen = false;
             return;
         }
+        if (inter.spec.type === 'roaringWaves') {
+            this.startRoaringWavesInterlude(inter.spec);
+            this.currentInterlude = inter;
+            this.interludeStartTime = this.time.now;
+            this.interludeFrozen = false;
+            return;
+        }
         if (inter.spec.type === 'sparkLink') {
             this.spawnElectricField(inter.spec.field);
             const count = inter.spec.turretsToSpawn ?? 3;
@@ -1295,16 +1322,25 @@ class GameScene extends Phaser.Scene {
         }
     }
 
+    // 스이쿤 페이즈 1/2: 라이코 or 엔테이 살아있는 동안 스이쿤 몸통 피격 데미지 1/2.
+    bossDamageMultiplier() {
+        if (this.raikou && this.raikou.active) return 0.5;
+        if (this.entei && this.entei.active) return 0.5;
+        return 1.0;
+    }
+
     onBossHit(bullet) {
         if (this.boss.isDead()) return;
+        const mult = this.bossDamageMultiplier();
+        const dmg = (bullet.damage ?? 1) * mult;
         if (bullet.pierce) {
             const time = this.time.now;
             const cd = bullet.contactCooldownMs ?? 0;
             if (time - (bullet.lastHitTargetTime ?? -Infinity) < cd) return;
             bullet.lastHitTargetTime = time;
-            this.boss.onHit(bullet.damage ?? 1);
+            this.boss.onHit(dmg);
         } else {
-            this.boss.onHit(bullet.damage ?? 1);
+            this.boss.onHit(dmg);
             bullet.destroy();
         }
     }
@@ -1314,7 +1350,47 @@ class GameScene extends Phaser.Scene {
         const time = this.time.now;
         if (time - orb.lastHitTargetTime < orb.weaponSpec.contactCooldownMs) return;
         orb.lastHitTargetTime = time;
+        this.boss.onHit(orb.weaponSpec.damage * this.bossDamageMultiplier());
+    }
+
+    // 라이코 피격: 데미지 100% 그대로 스이쿤 hp에 반영.
+    onRaikouShot(raikou, bullet) {
+        if (!this.boss || this.boss.isDead()) return;
+        const dmg = bullet.damage ?? 1;
+        if (bullet.pierce) {
+            const time = this.time.now;
+            const cd = bullet.contactCooldownMs ?? 0;
+            if (time - (bullet.lastHitTargetTime ?? -Infinity) < cd) return;
+            bullet.lastHitTargetTime = time;
+            this.boss.onHit(dmg);
+        } else {
+            this.boss.onHit(dmg);
+            bullet.destroy();
+        }
+    }
+
+    onRaikouOrbitHit(raikou, orb) {
+        if (!this.boss || this.boss.isDead()) return;
+        const time = this.time.now;
+        if (time - orb.lastHitTargetTime < orb.weaponSpec.contactCooldownMs) return;
+        orb.lastHitTargetTime = time;
         this.boss.onHit(orb.weaponSpec.damage);
+    }
+
+    // 라이코 몸통 접촉(돌진 아닌 상시 접촉): 플레이어 라이프 감소.
+    // 돌진 자체 데미지는 performRaikouCharge 안에서 라인-원 판정으로 처리.
+    onRaikouBodyHit(player) {
+        if (!player) return;
+        const time = this.time.now;
+        if (!player.canBeHit(time)) return;
+        player.onHit(time);
+        this.recordBotHit('raikou-body', null, player);
+        this.lives -= 1;
+        this.updateUI();
+        if (this.lives <= 0) {
+            this.gameOver = true;
+            this.uiMessage.setText('GAME OVER\nEnter: 다시 도전 / ESC: 메뉴');
+        }
     }
 
     onBossDefeated() {
@@ -1329,6 +1405,9 @@ class GameScene extends Phaser.Scene {
         this.suicideDroneSpawnerSpec = null;
         this.despawnBirdEmitters();
         this.despawnClouds();
+        this.destroyRaikou();
+        this.destroyEntei();
+        this.destroySuicunePhase3();
         this.boss.destroy();
 
         const bossData = this.boss.data;
@@ -2406,5 +2485,1019 @@ class GameScene extends Phaser.Scene {
         const cx = x1 + t * dx;
         const cy = y1 + t * dy;
         return Math.hypot(px - cx, py - cy);
+    }
+
+    // ===== 스이쿤 페이즈 1: 라이코 상태머신 =====
+    // 라이코는 스이쿤 앞에서 시작 → aiming (조준 방향 프리즈, 경고선) → 순간 돌진(벽까지) → 4회 후 스이쿤 복귀 + 파도미사일 발사.
+    // 주의: Boss 생성자에서 enterPhase(0)이 호출되는 시점엔 GameScene.boss가 아직 할당 전.
+    // 여기서는 spec만 저장하고 실제 스폰은 첫 updateRaikou 프레임에서 (this.boss 준비됨).
+    startRaikouSpawner(spec) {
+        this.raikouSpec = spec.raikou;
+        this.leashSpec = spec.leash;
+        this.waveMissileSpec = spec.waveMissile;
+        this.lightningMissileSpec = spec.lightningMissile;
+        this.raikouSpawnPending = true;
+        if (!this.raikouOverlayGraphics) {
+            this.raikouOverlayGraphics = this.add.graphics();
+            this.raikouOverlayGraphics.setDepth(30);
+        }
+        if (!this.leashGraphics) {
+            this.leashGraphics = this.add.graphics();
+            this.leashGraphics.setDepth(20);
+        }
+    }
+
+    spawnRaikou() {
+        if (!this.boss || !this.raikouSpec) return;
+        const rSpec = this.raikouSpec;
+        const bx = this.boss.sprite.x;
+        const by = this.boss.sprite.y;
+        const bossSize = this.boss.data.size ?? 44;
+        const startX = bx;
+        const startY = by + bossSize / 2 + rSpec.radius + 6;
+        const r = this.add.circle(startX, startY, rSpec.radius, rSpec.color);
+        r.setStrokeStyle(2, rSpec.strokeColor ?? 0x664400);
+        r.setDepth(35);
+        this.physics.add.existing(r);
+        r.body.setCircle(rSpec.radius);
+        r.body.setImmovable(true);
+        r.spec = rSpec;
+        r.state = 'aiming';
+        r.stateStartTime = this.time.now;
+        r.chargeCount = 0;
+        r.aimVecX = 0;
+        r.aimVecY = 1;
+        r.aimEndX = startX;
+        r.aimEndY = startY;
+        r.aimComputed = false;
+        this.raikou = r;
+        this.physics.add.overlap(r, this.playerBullets, (rr, b) => this.onRaikouShot(rr, b));
+        this.physics.add.overlap(r, this.orbitOrbs, (rr, o) => this.onRaikouOrbitHit(rr, o));
+        this.physics.add.overlap(this.player1.sprite, r, () => this.onRaikouBodyHit(this.player1));
+        this.physics.add.overlap(this.player2.sprite, r, () => this.onRaikouBodyHit(this.player2));
+    }
+
+    destroyRaikou() {
+        if (this.raikou) {
+            if (this.raikou.active) this.raikou.destroy();
+            this.raikou = null;
+        }
+        this.raikouSpec = null;
+        this.leashSpec = null;
+        this.waveMissileSpec = null;
+        this.raikouSpawnPending = false;
+        this.raikouAfterimages.forEach((a) => { if (a.sprite && a.sprite.active) a.sprite.destroy(); });
+        this.raikouAfterimages = [];
+        if (this.raikouOverlayGraphics) this.raikouOverlayGraphics.clear();
+        if (this.leashGraphics) this.leashGraphics.clear();
+    }
+
+    // ===== 스이쿤 페이즈 1→2 인터루드 (roaring_waves) =====
+    startRoaringWavesInterlude(spec) {
+        // 라이코 제거 (연출: 라이코가 물러남)
+        this.destroyRaikou();
+        // 파도 5연발 스케줄. missile 스펙을 임시 waveMissileSpec로 채워 fireWaveMissiles 재사용.
+        const burstSpec = spec.waveBurst ?? {};
+        const missile = burstSpec.missile ?? {};
+        this.roaringWaves = {
+            missile,
+            burstsRemaining: burstSpec.count ?? 5,
+            nextBurstAt: this.time.now + (burstSpec.delayMs ?? 0),
+            intervalMs: burstSpec.intervalMs ?? 200,
+        };
+        // 엔테이 등장
+        if (spec.entei) {
+            this.spawnEntei(spec.entei);
+        }
+    }
+
+    updateRoaringWaves(time) {
+        if (!this.roaringWaves) return;
+        while (this.roaringWaves.burstsRemaining > 0 && time >= this.roaringWaves.nextBurstAt) {
+            const prevSpec = this.waveMissileSpec;
+            this.waveMissileSpec = this.roaringWaves.missile;
+            this.fireWaveMissiles(time);
+            this.waveMissileSpec = prevSpec;
+            this.roaringWaves.burstsRemaining -= 1;
+            this.roaringWaves.nextBurstAt += this.roaringWaves.intervalMs;
+        }
+        if (this.roaringWaves.burstsRemaining <= 0) {
+            this.roaringWaves = null;
+        }
+    }
+
+    // ===== 페이즈 2 엔테이 =====
+    // 인터루드에서 spawnEntei로 생성 (상태 'entering'). enterEnteiStubPhase에서 활성화 ('active').
+    spawnEntei(spec) {
+        if (!this.boss || !this.boss.sprite) return;
+        const bx = this.boss.sprite.x;
+        const by = this.boss.sprite.y;
+        const startY = by + (spec.startOffsetY ?? -30);
+        const targetY = by + (spec.targetOffsetY ?? 34);
+        const e = this.add.circle(bx, startY, spec.radius ?? 18, spec.color ?? 0xff6644);
+        e.setStrokeStyle(2, spec.strokeColor ?? 0x883322);
+        e.setDepth(30);
+        e.setAlpha(spec.startAlpha ?? 0.25);
+        this.physics.add.existing(e);
+        e.body.setCircle(spec.radius ?? 18);
+        e.body.setImmovable(true);
+        e.spec = spec;
+        e.state = 'entering';
+        e.stateStartTime = this.time.now;
+        e.entranceStartX = bx;
+        e.entranceStartY = startY;
+        e.entranceTargetX = bx;
+        e.entranceTargetY = targetY;
+        this.entei = e;
+        // 콜리전: 총알 오버랩은 활성화 (다만 entering 중엔 no-op).
+        this.physics.add.overlap(e, this.playerBullets, (ee, b) => this.onEnteiShot(ee, b));
+        this.physics.add.overlap(e, this.orbitOrbs, (ee, o) => this.onEnteiOrbitHit(ee, o));
+        this.physics.add.overlap(this.player1.sprite, e, () => this.onEnteiBodyHit(this.player1));
+        this.physics.add.overlap(this.player2.sprite, e, () => this.onEnteiBodyHit(this.player2));
+    }
+
+    destroyEntei() {
+        if (this.entei) {
+            if (this.entei.active) this.entei.destroy();
+            this.entei = null;
+        }
+    }
+
+    updateEntei(time, delta) {
+        if (!this.entei || !this.entei.active) return;
+        const e = this.entei;
+        const spec = e.spec;
+        if (e.state === 'entering') {
+            const t = Math.min(1, (time - e.stateStartTime) / (spec.entranceMs ?? 5000));
+            e.x = e.entranceStartX + (e.entranceTargetX - e.entranceStartX) * t;
+            e.y = e.entranceStartY + (e.entranceTargetY - e.entranceStartY) * t;
+            const a0 = spec.startAlpha ?? 0.25;
+            const a1 = spec.endAlpha ?? 1.0;
+            e.setAlpha(a0 + (a1 - a0) * t);
+            if (t >= 1) e.state = 'idle';
+        } else if (e.state === 'aiming') {
+            if (!e.aimComputed) {
+                this.computeEnteiAim(e);
+                e.aimComputed = true;
+            }
+            if (time - e.stateStartTime >= (spec.aimIntervalMs ?? 1000)) {
+                this.performEnteiCharge(e, time);
+            }
+        } else if (e.state === 'flamethrower') {
+            if (e.flameShotsFired < (spec.flamesPerCharge ?? 3)) {
+                if (time >= e.nextFlameAt) {
+                    this.fireFlamethrower(e, time);
+                    e.flameShotsFired += 1;
+                    e.nextFlameAt = time + (spec.flameIntervalMs ?? 500);
+                }
+            } else {
+                // 3발 모두 발사 → 다음 서브사이클 or 복귀
+                e.flameShotsFired = 0;
+                e.chargeCount += 1;
+                if (e.chargeCount >= (spec.chargesPerCycle ?? 3)) {
+                    e.chargeCount = 0;
+                    e.state = 'returning';
+                    e.stateStartTime = time;
+                    this.fireEnteiWaveMissiles(time, spec.waveMissile);
+                } else {
+                    e.state = 'aiming';
+                    e.stateStartTime = time;
+                    e.aimComputed = false;
+                }
+            }
+        } else if (e.state === 'returning') {
+            const bx = this.boss.sprite.x;
+            const by = this.boss.sprite.y;
+            const bossSize = this.boss.data.size ?? 44;
+            const tx = bx;
+            const ty = by + bossSize / 2 + spec.radius + 6;
+            const dx = tx - e.x;
+            const dy = ty - e.y;
+            const dist = Math.hypot(dx, dy);
+            const step = (spec.returnSpeed ?? 250) * (delta / 1000);
+            if (dist <= step + 1) {
+                e.x = tx;
+                e.y = ty;
+                e.state = 'aiming';
+                e.stateStartTime = time;
+                e.aimComputed = false;
+            } else {
+                e.x += (dx / dist) * step;
+                e.y += (dy / dist) * step;
+            }
+        }
+        this.renderEnteiOverlays(time);
+    }
+
+    activateEntei() {
+        if (!this.entei) return;
+        this.entei.state = 'aiming';
+        this.entei.stateStartTime = this.time.now;
+        this.entei.chargeCount = 0;
+        this.entei.flameShotsFired = 0;
+        this.entei.aimComputed = false;
+        this.entei.aimVecX = 0;
+        this.entei.aimVecY = 1;
+        this.entei.aimEndX = this.entei.x;
+        this.entei.aimEndY = this.entei.y;
+        this.entei.setAlpha(1.0);
+    }
+
+    computeEnteiAim(e) {
+        let p = null;
+        if (this.player1 && !this.player1.isInvincible) p = this.player1;
+        else if (this.player2 && !this.player2.isInvincible) p = this.player2;
+        if (!p) return;
+        const tx = p.sprite.x;
+        const ty = p.sprite.y;
+        const dx = tx - e.x;
+        const dy = ty - e.y;
+        const dist = Math.hypot(dx, dy) || 1;
+        e.aimVecX = dx / dist;
+        e.aimVecY = dy / dist;
+        const end = this.enteiWallIntersect(e.x, e.y, e.aimVecX, e.aimVecY, e.spec.radius);
+        e.aimEndX = end.x;
+        e.aimEndY = end.y;
+    }
+
+    enteiWallIntersect(x, y, vx, vy, radius) {
+        const W = GameConfig.GAME_WIDTH;
+        const H = GameConfig.GAME_HEIGHT;
+        const EPS = 0.0001;
+        const margin = (radius ?? 18) + 2;
+        let tMin = Infinity;
+        if (vx > EPS) tMin = Math.min(tMin, (W - margin - x) / vx);
+        else if (vx < -EPS) tMin = Math.min(tMin, (margin - x) / vx);
+        if (vy > EPS) tMin = Math.min(tMin, (H - margin - y) / vy);
+        else if (vy < -EPS) tMin = Math.min(tMin, (margin - y) / vy);
+        if (!isFinite(tMin) || tMin < 0) tMin = 0;
+        return { x: x + vx * tMin, y: y + vy * tMin };
+    }
+
+    performEnteiCharge(e, time) {
+        const startX = e.x;
+        const startY = e.y;
+        const endX = e.aimEndX;
+        const endY = e.aimEndY;
+        const chargeHitRadius = e.spec.radius;
+        for (const player of [this.player1, this.player2]) {
+            if (!player || !player.sprite || !player.sprite.active) continue;
+            if (!player.canBeHit(time)) continue;
+            const dist = this.pointToSegmentDistance(
+                player.sprite.x, player.sprite.y,
+                startX, startY, endX, endY,
+            );
+            if (dist <= chargeHitRadius + player.size / 2) {
+                player.onHit(time);
+                this.recordBotHit('entei-charge', null, player);
+                this.lives -= 1;
+                this.updateUI();
+                if (this.lives <= 0) {
+                    this.gameOver = true;
+                    this.uiMessage.setText('GAME OVER\nEnter: 다시 도전 / ESC: 메뉴');
+                }
+            }
+        }
+        // 잔상 (라이코와 동일 배열 재활용 — 동시 존재 안 함)
+        const N = e.spec.afterimageCount ?? 5;
+        const fadeMs = e.spec.afterimageFadeMs ?? 300;
+        for (let i = 1; i <= N; i += 1) {
+            const t = i / (N + 1);
+            const ax = startX + (endX - startX) * t;
+            const ay = startY + (endY - startY) * t;
+            const g = this.add.circle(ax, ay, e.spec.radius, e.spec.color);
+            g.setDepth(30);
+            g.setAlpha(0.5);
+            this.raikouAfterimages.push({
+                sprite: g,
+                expireAt: time + fadeMs,
+                fadeMs,
+            });
+        }
+        // 순간 이동
+        e.x = endX;
+        e.y = endY;
+        // 돌진 착지 즉시 첫 화방
+        e.state = 'flamethrower';
+        e.stateStartTime = time;
+        e.flameShotsFired = 0;
+        e.nextFlameAt = time; // 즉시 첫 발
+    }
+
+    renderEnteiOverlays(time) {
+        // 라이코 오버레이 그래픽스를 공유 사용 (동시 존재 안 함).
+        const og = this.raikouOverlayGraphics;
+        if (!og) return;
+        og.clear();
+        const e = this.entei;
+        if (e && e.active && e.state === 'aiming') {
+            const spec = e.spec;
+            og.lineStyle(spec.radius * 2, spec.warnColor ?? 0xff2222, spec.warnAlpha ?? 0.55);
+            og.lineBetween(e.x, e.y, e.aimEndX, e.aimEndY);
+        }
+    }
+
+    fireFlamethrower(e, time) {
+        const spec = e.spec.flamethrower;
+        if (!spec) return;
+        // 매 화방마다 새로 조준
+        let p = null;
+        if (this.player1 && !this.player1.isInvincible) p = this.player1;
+        else if (this.player2 && !this.player2.isInvincible) p = this.player2;
+        let baseRad;
+        if (p) baseRad = Math.atan2(p.sprite.y - e.y, p.sprite.x - e.x);
+        else baseRad = Math.PI / 2; // 폴백: 아래쪽
+        const baseDeg = Phaser.Math.RadToDeg(baseRad);
+        const N = spec.bulletCount ?? 30;
+        const spread = spec.spreadDeg ?? 15;
+        const a = spec.a ?? 120;
+        for (let i = 0; i < N; i += 1) {
+            const angle = baseDeg + (Math.random() * 2 - 1) * spread;
+            const rad = Phaser.Math.DegToRad(angle);
+            const speed = a + Math.random() * 2 * a; // [a, 3a]
+            const vx = Math.cos(rad) * speed;
+            const vy = Math.sin(rad) * speed;
+            const bullet = this.spawnColoredCircleBullet(
+                e.x, e.y, vx, vy,
+                spec.radius ?? 5, spec.color ?? 0xff6644,
+            );
+            if (!bullet) continue;
+            if (spec.strokeColor !== undefined && bullet.setStrokeStyle) {
+                bullet.setStrokeStyle(1, spec.strokeColor);
+            }
+            bullet.damage = spec.damage ?? 1;
+        }
+    }
+
+    fireEnteiWaveMissiles(time, waveSpec) {
+        // 페이즈1과 같은 방식: 스이쿤 위치에서 90발 360도.
+        // waveMissileSpec을 임시 교체 후 fireWaveMissiles 재사용.
+        if (!waveSpec) return;
+        const prev = this.waveMissileSpec;
+        this.waveMissileSpec = waveSpec;
+        this.fireWaveMissiles(time);
+        this.waveMissileSpec = prev;
+    }
+
+    // 엔테이 피격 로직. entering 중엔 무적, active에서 100% 데미지 → 스이쿤 hp에.
+    // 페이즈 2 스이쿤 데미지 배율은 라이코 방식(엔테이 살아있으면 1/2) 채용 (TODO 조정).
+    onEnteiShot(entei, bullet) {
+        if (!this.boss || this.boss.isDead()) return;
+        if (!entei.state || entei.state === 'entering') return;
+        const dmg = bullet.damage ?? 1;
+        if (bullet.pierce) {
+            const time = this.time.now;
+            const cd = bullet.contactCooldownMs ?? 0;
+            if (time - (bullet.lastHitTargetTime ?? -Infinity) < cd) return;
+            bullet.lastHitTargetTime = time;
+            this.boss.onHit(dmg);
+        } else {
+            this.boss.onHit(dmg);
+            bullet.destroy();
+        }
+    }
+
+    onEnteiOrbitHit(entei, orb) {
+        if (!this.boss || this.boss.isDead()) return;
+        if (!entei.state || entei.state === 'entering') return;
+        const time = this.time.now;
+        if (time - orb.lastHitTargetTime < orb.weaponSpec.contactCooldownMs) return;
+        orb.lastHitTargetTime = time;
+        this.boss.onHit(orb.weaponSpec.damage);
+    }
+
+    onEnteiBodyHit(player) {
+        if (!player || !this.entei) return;
+        if (this.entei.state === 'entering') return;
+        const time = this.time.now;
+        if (!player.canBeHit(time)) return;
+        player.onHit(time);
+        this.recordBotHit('entei-body', null, player);
+        this.lives -= 1;
+        this.updateUI();
+        if (this.lives <= 0) {
+            this.gameOver = true;
+            this.uiMessage.setText('GAME OVER\nEnter: 다시 도전 / ESC: 메뉴');
+        }
+    }
+
+    updateRaikou(time, delta) {
+        // 스폰 지연 처리: Boss 생성자 안에서 startRaikouSpawner가 호출되므로 여기서 실제 스폰.
+        if (this.raikouSpawnPending && this.boss && this.boss.sprite && !this.raikou) {
+            this.spawnRaikou();
+            this.raikouSpawnPending = false;
+        }
+        // 잔상 페이드
+        if (this.raikouAfterimages.length > 0) {
+            this.raikouAfterimages = this.raikouAfterimages.filter((a) => {
+                if (!a.sprite || !a.sprite.active) return false;
+                if (time >= a.expireAt) { a.sprite.destroy(); return false; }
+                const t = (a.expireAt - time) / a.fadeMs;
+                a.sprite.setAlpha(t * 0.6);
+                return true;
+            });
+        }
+        if (!this.raikou || !this.raikou.active) {
+            if (this.raikouOverlayGraphics) this.raikouOverlayGraphics.clear();
+            if (this.leashGraphics) this.leashGraphics.clear();
+            return;
+        }
+        const r = this.raikou;
+        const spec = r.spec;
+        const elapsed = time - r.stateStartTime;
+
+        if (r.state === 'aiming') {
+            // 사이클 시작 시 한 번만 방향 계산 (해석 a: 조준 유지)
+            if (!r.aimComputed) {
+                this.computeRaikouAim(r);
+                r.aimComputed = true;
+            }
+            if (elapsed >= spec.aimIntervalMs) {
+                this.performRaikouCharge(r, time);
+            }
+        } else if (r.state === 'returning') {
+            const bx = this.boss.sprite.x;
+            const by = this.boss.sprite.y;
+            const bossSize = this.boss.data.size ?? 44;
+            const tx = bx;
+            const ty = by + bossSize / 2 + spec.radius + 6;
+            const dx = tx - r.x;
+            const dy = ty - r.y;
+            const dist = Math.hypot(dx, dy);
+            const step = spec.returnSpeed * (delta / 1000);
+            if (dist <= step + 1) {
+                r.x = tx;
+                r.y = ty;
+                r.state = 'aiming';
+                r.stateStartTime = time;
+                r.aimComputed = false;
+            } else {
+                r.x += (dx / dist) * step;
+                r.y += (dy / dist) * step;
+            }
+        }
+        this.renderRaikouOverlays(time);
+    }
+
+    computeRaikouAim(r) {
+        // 일반 상태(무적 아님) 캐릭터 조준. 규칙: 둘 중 !isInvincible 인 캐릭터.
+        let p = null;
+        if (this.player1 && !this.player1.isInvincible) p = this.player1;
+        else if (this.player2 && !this.player2.isInvincible) p = this.player2;
+        if (!p) {
+            // 안전장치: 둘 다 무적이면 마지막 방향 유지
+            return;
+        }
+        const tx = p.sprite.x;
+        const ty = p.sprite.y;
+        const dx = tx - r.x;
+        const dy = ty - r.y;
+        const dist = Math.hypot(dx, dy) || 1;
+        r.aimVecX = dx / dist;
+        r.aimVecY = dy / dist;
+        const end = this.raikouWallIntersect(r.x, r.y, r.aimVecX, r.aimVecY);
+        r.aimEndX = end.x;
+        r.aimEndY = end.y;
+    }
+
+    raikouWallIntersect(x, y, vx, vy) {
+        const W = GameConfig.GAME_WIDTH;
+        const H = GameConfig.GAME_HEIGHT;
+        const EPS = 0.0001;
+        // 라이코 반경만큼 벽 안쪽으로 clamp
+        const margin = (this.raikouSpec?.radius ?? 18) + 2;
+        let tMin = Infinity;
+        if (vx > EPS) tMin = Math.min(tMin, (W - margin - x) / vx);
+        else if (vx < -EPS) tMin = Math.min(tMin, (margin - x) / vx);
+        if (vy > EPS) tMin = Math.min(tMin, (H - margin - y) / vy);
+        else if (vy < -EPS) tMin = Math.min(tMin, (margin - y) / vy);
+        if (!isFinite(tMin) || tMin < 0) tMin = 0;
+        return { x: x + vx * tMin, y: y + vy * tMin };
+    }
+
+    performRaikouCharge(r, time) {
+        const startX = r.x;
+        const startY = r.y;
+        const endX = r.aimEndX;
+        const endY = r.aimEndY;
+        // 라인-원 판정으로 플레이어 피격 (돌진은 순간이라 물리 충돌 대신 궤적 스윕 판정).
+        const chargeHitRadius = r.spec.radius;
+        for (const player of [this.player1, this.player2]) {
+            if (!player || !player.sprite || !player.sprite.active) continue;
+            if (!player.canBeHit(time)) continue;
+            const dist = this.pointToSegmentDistance(
+                player.sprite.x, player.sprite.y,
+                startX, startY, endX, endY
+            );
+            if (dist <= chargeHitRadius + player.size / 2) {
+                // 1라이프 감소
+                player.onHit(time);
+                this.recordBotHit('raikou-charge', null, player);
+                this.lives -= 1;
+                this.updateUI();
+                if (this.lives <= 0) {
+                    this.gameOver = true;
+                    this.uiMessage.setText('GAME OVER\nEnter: 다시 도전 / ESC: 메뉴');
+                }
+            }
+        }
+        // 잔상 스폰
+        const N = r.spec.afterimageCount ?? 5;
+        const fadeMs = r.spec.afterimageFadeMs ?? 300;
+        for (let i = 1; i <= N; i += 1) {
+            const t = i / (N + 1);
+            const ax = startX + (endX - startX) * t;
+            const ay = startY + (endY - startY) * t;
+            const g = this.add.circle(ax, ay, r.spec.radius, r.spec.color);
+            g.setDepth(30);
+            g.setAlpha(0.5);
+            this.raikouAfterimages.push({
+                sprite: g,
+                expireAt: time + fadeMs,
+                fadeMs,
+            });
+        }
+        // 순간 이동
+        r.x = endX;
+        r.y = endY;
+        // 도착 위치에서 뒤쪽 방향(원래 있던 방향)으로 번개미사일 3발 발사.
+        this.fireRaikouLightningMissiles(r, time);
+        r.chargeCount += 1;
+        if (r.chargeCount >= (r.spec.chargesPerCycle ?? 4)) {
+            r.chargeCount = 0;
+            r.state = 'returning';
+            r.stateStartTime = time;
+            // 파도미사일 단발 발사
+            this.fireWaveMissiles(time);
+        } else {
+            r.state = 'aiming';
+            r.stateStartTime = time;
+            r.aimComputed = false;
+        }
+    }
+
+    renderRaikouOverlays(time) {
+        // 경고선 (aiming 상태만)
+        const og = this.raikouOverlayGraphics;
+        og.clear();
+        const r = this.raikou;
+        if (r && r.active && r.state === 'aiming') {
+            const spec = r.spec;
+            og.lineStyle(spec.radius * 2, spec.warnColor ?? 0xff2222, spec.warnAlpha ?? 0.55);
+            og.lineBetween(r.x, r.y, r.aimEndX, r.aimEndY);
+        }
+        // 목줄 (스이쿤-라이코 사이 항상)
+        const lg = this.leashGraphics;
+        lg.clear();
+        if (r && r.active && this.boss && this.boss.sprite && this.boss.sprite.active && this.leashSpec) {
+            const ls = this.leashSpec;
+            lg.lineStyle(ls.width ?? 2, ls.color ?? 0xcccccc, ls.alpha ?? 0.7);
+            lg.lineBetween(this.boss.sprite.x, this.boss.sprite.y, r.x, r.y);
+        }
+    }
+
+    fireWaveMissiles(time) {
+        const spec = this.waveMissileSpec;
+        if (!spec || !this.boss || !this.boss.sprite) return;
+        const N = spec.bulletCount ?? 90;
+        const cx = this.boss.sprite.x;
+        const cy = this.boss.sprite.y;
+        const a = spec.a ?? 100;
+        for (let i = 0; i < N; i += 1) {
+            const angle = (i / N) * Math.PI * 2;
+            const dx = Math.cos(angle);
+            const dy = Math.sin(angle);
+            const bullet = this.spawnColoredCircleBullet(cx, cy, dx * a, dy * a, spec.radius ?? 6, spec.color ?? 0x66ccff);
+            if (!bullet) continue;
+            if (spec.strokeColor !== undefined && bullet.setStrokeStyle) {
+                bullet.setStrokeStyle(1, spec.strokeColor);
+            }
+            bullet.isWaveMissile = true;
+            bullet.waveDx = dx;
+            bullet.waveDy = dy;
+            bullet.waveA = a;
+            bullet.wavePeriodSec = spec.periodSec ?? 1.0;
+            bullet.waveStartTime = time;
+            bullet.waveExpireAt = time + (spec.lifespanMs ?? 8000);
+            bullet.damage = spec.damage ?? 1;
+        }
+    }
+
+    updateWaveMissiles(time) {
+        this.bossBullets.children.each((b) => {
+            if (!b || !b.isWaveMissile || !b.active) return;
+            if (time > b.waveExpireAt) { b.destroy(); return; }
+            const period = b.wavePeriodSec || 1.0;
+            const tSec = (time - b.waveStartTime) / 1000;
+            const v = b.waveA * (1 + 2 * Math.sin((2 * Math.PI * tSec) / period));
+            b.body.setVelocity(b.waveDx * v, b.waveDy * v);
+        });
+    }
+
+    // 라이코 돌진 도착 위치에서 뒤쪽 방향으로 3발 발사. 각 미사일은 자기 초기 각도 A를 기억,
+    // 0.2초마다 A±60도 랜덤 재조준 (지그재그 = 번개 느낌). 모양은 노란 이등변삼각형.
+    fireRaikouLightningMissiles(r, time) {
+        const spec = this.lightningMissileSpec;
+        if (!spec) return;
+        // 뒤쪽 = 돌진 방향(aimVec)의 반대
+        const baseRad = Math.atan2(-r.aimVecY, -r.aimVecX);
+        const baseDeg = Phaser.Math.RadToDeg(baseRad);
+        const N = spec.bulletCount ?? 3;
+        const spread = spec.spreadDeg ?? 15;
+        const w = spec.width ?? 8;    // 좌우 (밑변)
+        const h = spec.height ?? 14;  // 앞뒤 (팁~밑변)
+        for (let i = 0; i < N; i += 1) {
+            let offset = 0;
+            if (N > 1) offset = ((i / (N - 1)) - 0.5) * 2 * spread;
+            const A = baseDeg + offset;
+            const rad = Phaser.Math.DegToRad(A);
+            const speed = spec.speed ?? 220;
+            const vx = Math.cos(rad) * speed;
+            const vy = Math.sin(rad) * speed;
+            // spawnBossTriangle 패턴: 팁이 위쪽(-y)이고 rotation = 진행각 + π/2 로 정렬.
+            const bullet = this.add.triangle(
+                r.x, r.y,
+                0, -h / 2,
+                -w / 2, h / 2,
+                w / 2, h / 2,
+                spec.color ?? 0xffff44,
+            );
+            if (spec.strokeColor !== undefined && bullet.setStrokeStyle) {
+                bullet.setStrokeStyle(1, spec.strokeColor);
+            }
+            this.physics.add.existing(bullet);
+            this.bossBullets.add(bullet);
+            bullet.body.setSize(w, h);
+            bullet.body.setVelocity(vx, vy);
+            bullet.rotation = rad + Math.PI / 2;
+            bullet.isLightningMissile = true;
+            bullet.isTriangle = true;
+            bullet.lightningInitAngleDeg = A;
+            bullet.lightningSpeed = speed;
+            bullet.lightningRedirectRangeDeg = spec.redirectRangeDeg ?? 60;
+            bullet.lightningNextRedirectAt = time + (spec.redirectIntervalMs ?? 100);
+            bullet.lightningRedirectIntervalMs = spec.redirectIntervalMs ?? 100;
+            bullet.damage = spec.damage ?? 1;
+        }
+    }
+
+    updateLightningMissiles(time) {
+        this.bossBullets.children.each((b) => {
+            if (!b || !b.isLightningMissile || !b.active) return;
+            if (time >= b.lightningNextRedirectAt) {
+                const range = b.lightningRedirectRangeDeg;
+                const A = b.lightningInitAngleDeg + (Math.random() * 2 - 1) * range;
+                const rad = Phaser.Math.DegToRad(A);
+                b.body.setVelocity(
+                    Math.cos(rad) * b.lightningSpeed,
+                    Math.sin(rad) * b.lightningSpeed,
+                );
+                b.rotation = rad + Math.PI / 2;
+                b.lightningNextRedirectAt = time + b.lightningRedirectIntervalMs;
+            }
+        });
+    }
+
+    // 페이즈 2 진입: 인터루드에서 이미 엔테이 스폰됨. 여기서 활성화 (state → 'active').
+    // 라이코가 살아있으면 안전장치로 제거 (인터루드에서 destroyRaikou 호출했지만 방어).
+    enterEnteiStubPhase() {
+        this.destroyRaikou();
+        this.activateEntei();
+    }
+
+    // ===== 페이즈 3 (스이쿤 단독) =====
+    // 대사이클: (돌진 → 파도 90발 → 물대포×3) × subCyclesPerGrand
+    //         → 그랜드(중앙 xy 돌진 → 파도 9연발) → 상단 복귀 → 반복.
+    enterSuicunePhase3(spec) {
+        this.destroyRaikou();
+        this.destroyEntei();
+        this.suicunePhase3Spec = spec;
+        if (!this.suicuneOverlayGraphics) {
+            this.suicuneOverlayGraphics = this.add.graphics();
+            this.suicuneOverlayGraphics.setDepth(30);
+        }
+        this.suicunePhase3State = {
+            stage: 'aim',
+            stateStartTime: this.time.now,
+            aimComputed: false,
+            aimVecX: 0, aimVecY: 1,
+            aimEndX: this.boss.sprite.x, aimEndY: this.boss.sprite.y,
+            subCycleCount: 0,
+            waterShots: [],
+            waterAimStarted: 0,
+            waterFired: 0,
+            waterBeams: [], // 발사 후 워터빔 잔상 (페이드용, 순수 시각)
+            grandBurstRemaining: 0,
+            grandNextBurstAt: 0,
+            returnTargetX: 0, returnTargetY: 0,
+        };
+    }
+
+    updateSuicunePhase3(time, delta) {
+        if (!this.suicunePhase3State || !this.suicunePhase3Spec) return;
+        if (!this.boss || this.boss.isDead()) return;
+        const s = this.suicunePhase3State;
+        const spec = this.suicunePhase3Spec;
+        const b = this.boss.sprite;
+
+        if (s.stage === 'aim') {
+            if (!s.aimComputed) {
+                let p = null;
+                if (this.player1 && !this.player1.isInvincible) p = this.player1;
+                else if (this.player2 && !this.player2.isInvincible) p = this.player2;
+                if (p) {
+                    const dx = p.sprite.x - b.x;
+                    const dy = p.sprite.y - b.y;
+                    const dist = Math.hypot(dx, dy) || 1;
+                    s.aimVecX = dx / dist;
+                    s.aimVecY = dy / dist;
+                    const end = this.enteiWallIntersect(b.x, b.y, s.aimVecX, s.aimVecY, spec.bodySize / 2);
+                    s.aimEndX = end.x;
+                    s.aimEndY = end.y;
+                    s.aimComputed = true;
+                }
+            }
+            if (time - s.stateStartTime >= (spec.aimIntervalMs ?? 1000)) {
+                this.performSuicuneCharge(time, s.aimEndX, s.aimEndY, spec);
+                this.fireEnteiWaveMissiles(time, spec.waveMissile);
+                s.stage = 'water';
+                s.stateStartTime = time;
+                s.waterAimStarted = 0;
+                s.waterFired = 0;
+                s.waterShots = [];
+            }
+        } else if (s.stage === 'water') {
+            const wc = spec.waterCannon;
+            const targetCount = wc?.count ?? 3;
+            // 새 조준 스폰 (시작 간격 도래한 만큼)
+            while (s.waterAimStarted < targetCount) {
+                const dueAt = s.stateStartTime + s.waterAimStarted * (wc.aimStartIntervalMs ?? 500);
+                if (time < dueAt) break;
+                const shot = this.createSuicuneWaterCannonShot(dueAt, spec);
+                if (!shot) break; // 무적 캐릭터만 있으면 다음 프레임 재시도
+                s.waterShots.push(shot);
+                s.waterAimStarted += 1;
+            }
+            // 발사 시점 도래한 shot 판정
+            for (const shot of s.waterShots) {
+                if (shot.fired) continue;
+                if (time >= shot.fireAt) {
+                    this.fireSuicuneWaterCannon(shot, spec, time);
+                    s.waterBeams.push({
+                        originX: shot.originX, originY: shot.originY,
+                        endX: shot.endX, endY: shot.endY,
+                        startTime: time,
+                        expireAt: time + (wc.beamAfterMs ?? 260),
+                    });
+                    shot.fired = true;
+                    s.waterFired += 1;
+                }
+            }
+            if (s.waterAimStarted >= targetCount && s.waterFired >= targetCount) {
+                s.subCycleCount += 1;
+                if (s.subCycleCount >= (spec.subCyclesPerGrand ?? 3)) {
+                    s.subCycleCount = 0;
+                    s.stage = 'grandAim';
+                    s.stateStartTime = time;
+                    // 중앙 경고선 고정 (캐릭터 위치 무관)
+                    const cx = GameConfig.GAME_WIDTH / 2;
+                    const cy = GameConfig.GAME_HEIGHT / 2;
+                    const dx = cx - b.x;
+                    const dy = cy - b.y;
+                    const dist = Math.hypot(dx, dy) || 1;
+                    s.aimVecX = dx / dist;
+                    s.aimVecY = dy / dist;
+                    s.aimEndX = cx;
+                    s.aimEndY = cy;
+                    s.aimComputed = true;
+                } else {
+                    s.stage = 'aim';
+                    s.stateStartTime = time;
+                    s.aimComputed = false;
+                }
+            }
+        } else if (s.stage === 'grandAim') {
+            const grand = spec.grand ?? {};
+            if (time - s.stateStartTime >= (grand.aimIntervalMs ?? spec.aimIntervalMs ?? 1000)) {
+                const grandSpec = {
+                    bodySize: spec.bodySize,
+                    color: spec.color,
+                    afterimageCount: grand.afterimageCount ?? spec.afterimageCount,
+                    afterimageFadeMs: grand.afterimageFadeMs ?? spec.afterimageFadeMs,
+                };
+                this.performSuicuneCharge(time, s.aimEndX, s.aimEndY, grandSpec);
+                s.stage = 'grandWave';
+                s.stateStartTime = time;
+                s.grandBurstRemaining = grand.waveBurst?.count ?? 9;
+                s.grandNextBurstAt = time;
+            }
+        } else if (s.stage === 'grandWave') {
+            const grand = spec.grand ?? {};
+            const interval = grand.waveBurst?.intervalMs ?? 200;
+            while (s.grandBurstRemaining > 0 && time >= s.grandNextBurstAt) {
+                this.fireEnteiWaveMissiles(time, spec.waveMissile);
+                s.grandBurstRemaining -= 1;
+                s.grandNextBurstAt += interval;
+            }
+            if (s.grandBurstRemaining <= 0) {
+                s.stage = 'return';
+                s.returnTargetX = GameConfig.GAME_WIDTH / 2;
+                s.returnTargetY = this.boss.data.startY ?? 140;
+            }
+        } else if (s.stage === 'return') {
+            const grand = spec.grand ?? {};
+            const dx = s.returnTargetX - b.x;
+            const dy = s.returnTargetY - b.y;
+            const dist = Math.hypot(dx, dy);
+            const step = (grand.returnSpeed ?? 180) * (delta / 1000);
+            if (dist <= step + 1) {
+                b.x = s.returnTargetX;
+                b.y = s.returnTargetY;
+                s.stage = 'aim';
+                s.stateStartTime = time;
+                s.aimComputed = false;
+            } else {
+                b.x += (dx / dist) * step;
+                b.y += (dy / dist) * step;
+            }
+        }
+        this.renderSuicunePhase3Overlay();
+    }
+
+    // 스이쿤 돌진: 조준 지점으로 순간이동 + 잔상 + 라인-원 판정. 소사이클·그랜드 공용.
+    performSuicuneCharge(time, endX, endY, spec) {
+        const b = this.boss.sprite;
+        const startX = b.x;
+        const startY = b.y;
+        const halfBody = (spec.bodySize ?? 44) / 2;
+        for (const player of [this.player1, this.player2]) {
+            if (!player || !player.sprite || !player.sprite.active) continue;
+            if (!player.canBeHit(time)) continue;
+            const dist = this.pointToSegmentDistance(
+                player.sprite.x, player.sprite.y,
+                startX, startY, endX, endY,
+            );
+            if (dist <= halfBody + player.size / 2) {
+                player.onHit(time);
+                this.recordBotHit('suicune-charge', null, player);
+                this.lives -= 1;
+                this.updateUI();
+                if (this.lives <= 0) {
+                    this.gameOver = true;
+                    this.uiMessage.setText('GAME OVER\nEnter: 다시 도전 / ESC: 메뉴');
+                }
+            }
+        }
+        const N = spec.afterimageCount ?? 5;
+        const fadeMs = spec.afterimageFadeMs ?? 300;
+        for (let i = 1; i <= N; i += 1) {
+            const t = i / (N + 1);
+            const ax = startX + (endX - startX) * t;
+            const ay = startY + (endY - startY) * t;
+            const g = this.add.rectangle(ax, ay, spec.bodySize, spec.bodySize, spec.color ?? 0x88aacc);
+            g.setDepth(30);
+            g.setAlpha(0.5);
+            this.raikouAfterimages.push({ sprite: g, expireAt: time + fadeMs, fadeMs });
+        }
+        b.x = endX;
+        b.y = endY;
+    }
+
+    // 물대포 조준선 하나 생성. 조준 시점 스이쿤 위치·무적아닌 캐릭터 방향으로 벽까지 라인 고정.
+    createSuicuneWaterCannonShot(aimStartTime, spec) {
+        const b = this.boss.sprite;
+        let p = null;
+        if (this.player1 && !this.player1.isInvincible) p = this.player1;
+        else if (this.player2 && !this.player2.isInvincible) p = this.player2;
+        if (!p) return null;
+        const dx = p.sprite.x - b.x;
+        const dy = p.sprite.y - b.y;
+        const dist = Math.hypot(dx, dy) || 1;
+        const vx = dx / dist;
+        const vy = dy / dist;
+        const end = this.enteiWallIntersect(b.x, b.y, vx, vy, 0);
+        return {
+            originX: b.x, originY: b.y,
+            endX: end.x, endY: end.y,
+            fireAt: aimStartTime + (spec.waterCannon?.fuseMs ?? 500),
+            fired: false,
+        };
+    }
+
+    fireSuicuneWaterCannon(shot, spec, time) {
+        const wc = spec.waterCannon ?? {};
+        const halfW = (wc.beamWidth ?? 24) / 2;
+        for (const player of [this.player1, this.player2]) {
+            if (!player || !player.sprite || !player.sprite.active) continue;
+            if (!player.canBeHit(time)) continue;
+            const dist = this.pointToSegmentDistance(
+                player.sprite.x, player.sprite.y,
+                shot.originX, shot.originY, shot.endX, shot.endY,
+            );
+            if (dist <= halfW + player.size / 2) {
+                player.onHit(time);
+                this.recordBotHit('suicune-water', null, player);
+                this.lives -= 1;
+                this.updateUI();
+                if (this.lives <= 0) {
+                    this.gameOver = true;
+                    this.uiMessage.setText('GAME OVER\nEnter: 다시 도전 / ESC: 메뉴');
+                }
+            }
+        }
+        this.spawnSuicuneWaterDroplets(shot.endX, shot.endY, wc.droplet);
+    }
+
+    // 물방울: 벽 접점에서 벽 안쪽(반대편) 방향으로 180도 반원 부채꼴 확산.
+    spawnSuicuneWaterDroplets(x, y, spec) {
+        if (!spec) return;
+        const W = GameConfig.GAME_WIDTH;
+        const H = GameConfig.GAME_HEIGHT;
+        // 접점에서 가장 가까운 벽의 안쪽 방향(노멀) 판별.
+        const dLeft = x;
+        const dRight = W - x;
+        const dTop = y;
+        const dBottom = H - y;
+        const dMin = Math.min(dLeft, dRight, dTop, dBottom);
+        let nx = 0, ny = 0;
+        if (dMin === dLeft) nx = 1;
+        else if (dMin === dRight) nx = -1;
+        else if (dMin === dTop) ny = 1;
+        else ny = -1;
+        const baseDeg = Phaser.Math.RadToDeg(Math.atan2(ny, nx));
+        const N = spec.bulletCount ?? 6;
+        const spread = spec.spreadDeg ?? 90;
+        const sMin = spec.speedMin ?? 200;
+        const sMax = spec.speedMax ?? 320;
+        for (let i = 0; i < N; i += 1) {
+            const t = N > 1 ? (i / (N - 1)) - 0.5 : 0; // -0.5 ~ +0.5
+            const angleDeg = baseDeg + t * 2 * spread;
+            const rad = Phaser.Math.DegToRad(angleDeg);
+            const speed = sMin + Math.random() * (sMax - sMin);
+            const vx = Math.cos(rad) * speed;
+            const vy = Math.sin(rad) * speed;
+            const bullet = this.spawnColoredCircleBullet(
+                x, y, vx, vy,
+                spec.radius ?? 4, spec.color ?? 0xaaddff,
+            );
+            if (!bullet) continue;
+            if (spec.strokeColor !== undefined && bullet.setStrokeStyle) {
+                bullet.setStrokeStyle(1, spec.strokeColor);
+            }
+            bullet.damage = spec.damage ?? 1;
+        }
+    }
+
+    renderSuicunePhase3Overlay() {
+        const og = this.suicuneOverlayGraphics;
+        if (!og) return;
+        og.clear();
+        const s = this.suicunePhase3State;
+        const spec = this.suicunePhase3Spec;
+        if (!s || !spec || !this.boss || !this.boss.sprite) return;
+        const b = this.boss.sprite;
+        const wc = spec.waterCannon ?? {};
+        if (s.stage === 'aim') {
+            og.lineStyle(spec.bodySize ?? 44, spec.warnColor ?? 0xff2222, spec.warnAlpha ?? 0.55);
+            og.lineBetween(b.x, b.y, s.aimEndX, s.aimEndY);
+        } else if (s.stage === 'grandAim') {
+            const grand = spec.grand ?? {};
+            og.lineStyle(spec.bodySize ?? 44, grand.warnColor ?? spec.warnColor ?? 0xff2222, grand.warnAlpha ?? spec.warnAlpha ?? 0.55);
+            og.lineBetween(b.x, b.y, s.aimEndX, s.aimEndY);
+        } else if (s.stage === 'water') {
+            og.lineStyle(wc.beamWidth ?? 24, wc.warnColor ?? 0x44aaff, wc.warnAlpha ?? 0.55);
+            for (const shot of s.waterShots) {
+                if (shot.fired) continue;
+                og.lineBetween(shot.originX, shot.originY, shot.endX, shot.endY);
+            }
+        }
+        // 워터빔 잔상 (stage 무관, 발사 후 hold → fade)
+        if (s.waterBeams && s.waterBeams.length > 0) {
+            const now = this.time.now;
+            s.waterBeams = s.waterBeams.filter((beam) => now < beam.expireAt);
+            const beamW = wc.beamAfterWidth ?? Math.round((wc.beamWidth ?? 24) * 1.5);
+            const beamColor = wc.beamAfterColor ?? 0x88ccff;
+            const holdMs = wc.beamAfterHoldMs ?? 0;
+            for (const beam of s.waterBeams) {
+                const totalMs = beam.expireAt - beam.startTime;
+                const age = now - beam.startTime;
+                let alpha;
+                if (age < holdMs) {
+                    alpha = 1.0;
+                } else {
+                    const fadeAge = age - holdMs;
+                    const fadeMs = Math.max(1, totalMs - holdMs);
+                    alpha = Math.max(0, Math.min(1, 1 - fadeAge / fadeMs));
+                }
+                og.lineStyle(beamW, beamColor, alpha);
+                og.lineBetween(beam.originX, beam.originY, beam.endX, beam.endY);
+            }
+        }
+    }
+
+    destroySuicunePhase3() {
+        this.suicunePhase3Spec = null;
+        this.suicunePhase3State = null;
+        if (this.suicuneOverlayGraphics) this.suicuneOverlayGraphics.clear();
     }
 }
