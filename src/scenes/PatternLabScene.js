@@ -54,6 +54,7 @@ class PatternLabScene extends Phaser.Scene {
         this.raikouAfterimages = [];
         this.raikouSpawnPending = false;
         this.roaringWaves = null;
+        this.convergingWaves = null;
         this.entei = null;
         // 스이쿤 페이즈 3 상태 (씬 재시작 시 이전 게임 상태가 남는 버그 방지).
         this.suicunePhase3State = null;
@@ -434,6 +435,13 @@ class PatternLabScene extends Phaser.Scene {
             this.interludeFrozen = false;
             return;
         }
+        if (inter.spec.type === 'convergingWaves') {
+            this.startConvergingWavesInterlude(inter.spec);
+            this.currentInterlude = inter;
+            this.interludeStartTime = this.time.now;
+            this.interludeFrozen = false;
+            return;
+        }
         this.currentInterlude = inter;
         this.interludeStartTime = this.time.now;
         this.interludeFrozen = false;
@@ -636,6 +644,7 @@ class PatternLabScene extends Phaser.Scene {
         this.updateWaveMissiles(time);
         this.updateLightningMissiles(time);
         this.updateRoaringWaves(time);
+        this.updateConvergingWaves(time);
         this.updateEntei(time, delta);
         this.updateSuicunePhase3(time, delta);
 
@@ -2612,6 +2621,55 @@ class PatternLabScene extends Phaser.Scene {
         }
         if (this.roaringWaves.burstsRemaining <= 0) {
             this.roaringWaves = null;
+        }
+    }
+
+    // ===== converging_waves 인터루드 (페이즈 2→3) =====
+    startConvergingWavesInterlude(spec) {
+        this.destroyEntei();
+        if (!this.boss || !this.boss.sprite) return;
+        const burstSpec = spec.waveBurst ?? {};
+        this.convergingWaves = {
+            slideStartX: this.boss.sprite.x,
+            slideStartY: this.boss.sprite.y,
+            slideTargetX: LAB_PLAY_W / 2,
+            slideTargetY: LAB_H / 2,
+            slideStartTime: this.time.now,
+            slideMs: spec.slideMs ?? 3000,
+            slideDone: false,
+            missile: burstSpec.missile ?? {},
+            burstsRemaining: 0,
+            burstTotal: burstSpec.count ?? 9,
+            nextBurstAt: 0,
+            intervalMs: burstSpec.intervalMs ?? 200,
+        };
+    }
+
+    updateConvergingWaves(time) {
+        if (!this.convergingWaves) return;
+        if (!this.boss || !this.boss.sprite) return;
+        const s = this.convergingWaves;
+        if (!s.slideDone) {
+            const t = Math.min(1, (time - s.slideStartTime) / s.slideMs);
+            this.boss.sprite.x = s.slideStartX + (s.slideTargetX - s.slideStartX) * t;
+            this.boss.sprite.y = s.slideStartY + (s.slideTargetY - s.slideStartY) * t;
+            if (t >= 1) {
+                s.slideDone = true;
+                s.burstsRemaining = s.burstTotal;
+                s.nextBurstAt = time;
+            }
+            return;
+        }
+        while (s.burstsRemaining > 0 && time >= s.nextBurstAt) {
+            const prev = this.waveMissileSpec;
+            this.waveMissileSpec = s.missile;
+            this.fireWaveMissiles(time);
+            this.waveMissileSpec = prev;
+            s.burstsRemaining -= 1;
+            s.nextBurstAt += s.intervalMs;
+        }
+        if (s.burstsRemaining <= 0) {
+            this.convergingWaves = null;
         }
     }
 

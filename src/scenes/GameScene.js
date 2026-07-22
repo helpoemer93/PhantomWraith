@@ -48,6 +48,7 @@ class GameScene extends Phaser.Scene {
         this.suicuneOverlayGraphics = null;
         this.entei = null;
         this.roaringWaves = null;
+        this.convergingWaves = null;
         this.turretConnectionsSpec = null;
         this.turretConnectionsGraphics = null;
         this.turretMotionSpec = null;
@@ -395,6 +396,7 @@ class GameScene extends Phaser.Scene {
         this.updateWaveMissiles(time);
         this.updateLightningMissiles(time);
         this.updateRoaringWaves(time);
+        this.updateConvergingWaves(time);
         this.updateEntei(time, delta);
         this.updateSuicunePhase3(time, delta);
 
@@ -1217,6 +1219,13 @@ class GameScene extends Phaser.Scene {
         }
         if (inter.spec.type === 'roaringWaves') {
             this.startRoaringWavesInterlude(inter.spec);
+            this.currentInterlude = inter;
+            this.interludeStartTime = this.time.now;
+            this.interludeFrozen = false;
+            return;
+        }
+        if (inter.spec.type === 'convergingWaves') {
+            this.startConvergingWavesInterlude(inter.spec);
             this.currentInterlude = inter;
             this.interludeStartTime = this.time.now;
             this.interludeFrozen = false;
@@ -2583,6 +2592,56 @@ class GameScene extends Phaser.Scene {
         }
         if (this.roaringWaves.burstsRemaining <= 0) {
             this.roaringWaves = null;
+        }
+    }
+
+    // ===== 스이쿤 페이즈 2→3 인터루드 (converging_waves) =====
+    // 엔테이 즉시 제거 → 스이쿤이 맵 중앙 xy로 슬라이딩(3초) → 도착 후 파도미사일 9연발(0.2초 간격).
+    startConvergingWavesInterlude(spec) {
+        this.destroyEntei();
+        if (!this.boss || !this.boss.sprite) return;
+        const burstSpec = spec.waveBurst ?? {};
+        this.convergingWaves = {
+            slideStartX: this.boss.sprite.x,
+            slideStartY: this.boss.sprite.y,
+            slideTargetX: GameConfig.GAME_WIDTH / 2,
+            slideTargetY: GameConfig.GAME_HEIGHT / 2,
+            slideStartTime: this.time.now,
+            slideMs: spec.slideMs ?? 3000,
+            slideDone: false,
+            missile: burstSpec.missile ?? {},
+            burstsRemaining: 0,
+            burstTotal: burstSpec.count ?? 9,
+            nextBurstAt: 0,
+            intervalMs: burstSpec.intervalMs ?? 200,
+        };
+    }
+
+    updateConvergingWaves(time) {
+        if (!this.convergingWaves) return;
+        if (!this.boss || !this.boss.sprite) return;
+        const s = this.convergingWaves;
+        if (!s.slideDone) {
+            const t = Math.min(1, (time - s.slideStartTime) / s.slideMs);
+            this.boss.sprite.x = s.slideStartX + (s.slideTargetX - s.slideStartX) * t;
+            this.boss.sprite.y = s.slideStartY + (s.slideTargetY - s.slideStartY) * t;
+            if (t >= 1) {
+                s.slideDone = true;
+                s.burstsRemaining = s.burstTotal;
+                s.nextBurstAt = time;
+            }
+            return;
+        }
+        while (s.burstsRemaining > 0 && time >= s.nextBurstAt) {
+            const prev = this.waveMissileSpec;
+            this.waveMissileSpec = s.missile;
+            this.fireWaveMissiles(time);
+            this.waveMissileSpec = prev;
+            s.burstsRemaining -= 1;
+            s.nextBurstAt += s.intervalMs;
+        }
+        if (s.burstsRemaining <= 0) {
+            this.convergingWaves = null;
         }
     }
 
