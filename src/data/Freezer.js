@@ -2,7 +2,7 @@ const FreezerData = {
     id: 'freezer',
     name: '프리져',
     rewardWeapon: 'piercing',
-    maxHp: 600,
+    maxHp: 1200,
     size: 80,
     color: 0x88ccff,
     startY: 120,
@@ -46,6 +46,27 @@ const FreezerData = {
                             speed: 180,
                             intervalMs: 100,
                             maxShots: 1,
+                        },
+                    },
+                    {
+                        type: 'spawnClouds',
+                        spec: {
+                            items: [
+                                { startX: 0, y: 100 },
+                                { startX: 240, y: 100 },
+                            ],
+                            width: 60,
+                            height: 40,
+                            color: 0xaaaaaa,
+                            moveSpeed: 100,
+                            cloudFireIntervalMs: 1400,
+                            bullet: {
+                                shape: 'snowflake',
+                                speed: 180,
+                                angleDeg: 90,
+                                radius: 6,
+                                color: 0xddf4ff,
+                            },
                         },
                     },
                     { type: 'pause', durationMs: 1000 },
@@ -319,6 +340,14 @@ const Freezer = {
                 { startX: 180, y: 100 },
                 { startX: 360, y: 100 },
             ];
+            // 페이즈 1은 sequence step 'spawnClouds' 안에 spec 저장
+            if (d.phases[0].sequence) {
+                for (const step of d.phases[0].sequence.steps) {
+                    if (step.type === 'spawnClouds' && step.spec) {
+                        step.spec.items = cloudItems3;
+                    }
+                }
+            }
             if (d.phases[1].clouds) d.phases[1].clouds.items = cloudItems3;
             if (d.phases[2].clouds) d.phases[2].clouds.items = cloudItems3;
         }

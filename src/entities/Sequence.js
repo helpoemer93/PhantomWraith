@@ -7,6 +7,7 @@ class Sequence {
         this.currentPattern = null;
         this.pauseUntil = null;
         this.done = false;
+        this.executedOneShots = new Set();
     }
 
     update(time, delta) {
@@ -46,6 +47,12 @@ class Sequence {
                 this.pauseUntil = null;
                 this.stepIndex += 1;
             }
+        } else if (step.type === 'spawnClouds') {
+            if (!this.executedOneShots.has(this.stepIndex)) {
+                if (this.scene.spawnClouds) this.scene.spawnClouds(step.spec);
+                this.executedOneShots.add(this.stepIndex);
+            }
+            this.stepIndex += 1;
         } else {
             this.stepIndex += 1;
         }
