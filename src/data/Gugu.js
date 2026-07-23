@@ -104,7 +104,7 @@ const GuguData = {
             sequence: GuguPhase1Sequence,
             baseAttack: {
                 intervalMs: 500,
-                angles: [-30, 0, 30],
+                angles: [-45, -15, 15, 45],
                 bulletSpec: {
                     shape: 'circle',
                     speed: 200,
@@ -158,10 +158,10 @@ const Gugu = {
             d.phases[2].sequence.steps[1].durationMs -= 500;
         }
         if (lv >= 5) {
-            // 기본공격 탄환수 +1, 등간격 확장
+            // 기본공격 탄환수 +1 (3→4), 페이즈 3은 4→5로 등간격 확장
             d.baseAttack.angles = [-22.5, -7.5, 7.5, 22.5];
             if (d.phases[2].baseAttack) {
-                d.phases[2].baseAttack.angles = [-45, -15, 15, 45];
+                d.phases[2].baseAttack.angles = [-60, -30, 0, 30, 60];
             }
         }
 
@@ -180,7 +180,8 @@ const Gugu = {
         } else if (level === 4) {
             labels.push('궤도미사일 pause -0.5초 (4→3.5초)');
         } else if (level === 5) {
-            labels.push('기본공격 탄환수 +1 (3→4발, 각도 확장)');
+            labels.push('기본공격 탄환수 +1 (3→4발)');
+            labels.push('페이즈 3 기본공격 탄환수 +1 (4→5발)');
         }
         return labels;
     },
