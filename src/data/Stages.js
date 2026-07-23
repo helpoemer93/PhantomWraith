@@ -1,6 +1,6 @@
 const Stages = [
     Gugu,
-    IceBoss,
+    Freezer,
     Metagross,
     Suicune,
 ];

@@ -1,6 +1,6 @@
-const IceBossData = {
-    id: 'iceBoss',
-    name: '설원의 얼음왕',
+const FreezerData = {
+    id: 'freezer',
+    name: '프리져',
     rewardWeapon: 'piercing',
     maxHp: 600,
     size: 80,
@@ -303,11 +303,11 @@ const IceBossData = {
     ],
 };
 
-const IceBoss = {
-    ...IceBossData,
+const Freezer = {
+    ...FreezerData,
 
     buildLevelData(level) {
-        const d = JSON.parse(JSON.stringify(IceBossData));
+        const d = JSON.parse(JSON.stringify(FreezerData));
         const lv = Math.max(1, level);
         const scale = Math.pow(1.20, lv - 1);
         d.maxHp = Math.round(d.maxHp * scale);
