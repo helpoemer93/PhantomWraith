@@ -77,6 +77,9 @@ class Boss {
         if (phase.turretConnections && this.scene.startTurretConnections) {
             this.scene.startTurretConnections(phase.turretConnections);
         }
+        if (this.data.id === 'freezer' && index === 1 && this.scene.startFreezerWind) {
+            this.scene.startFreezerWind();
+        }
         if (phase.sequence) {
             const reused = prevPatterns.find(
                 (p) => p instanceof Sequence && p.spec === phase.sequence && !p.done,
@@ -150,6 +153,11 @@ class Boss {
     fireBaseAttack(time) {
         const cfg = this.currentBaseAttack();
         if (!cfg) return;
+
+        // 구구 기본공격 사운드 (날개짓, 3발 동시라도 함수 1회 호출이라 한 번만 재생됨)
+        if (this.data.id === 'gugu' && this.scene.sound && this.scene.cache.audio.exists('gugu-flap')) {
+            this.scene.sound.play('gugu-flap', { volume: 0.35 });
+        }
 
         if (cfg.type === 'gearMultiTarget') {
             if (this.scene.fireGearBurst) this.scene.fireGearBurst(this, cfg);

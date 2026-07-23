@@ -3,6 +3,23 @@ class BootScene extends Phaser.Scene {
         super({ key: 'BootScene' });
     }
 
+    preload() {
+        // 사운드는 전역 캐시. 이후 모든 씬에서 this.sound.play(key) 로 사용.
+        this.load.audio('gugu-flap', 'Sound/gugu-flap.mp3');
+        this.load.audio('gugu-vortex', 'Sound/gugu-vortex.mp3');
+        this.load.audio('gugu-scatter', 'Sound/gugu-scatter.mp3');
+        this.load.audio('gugu-bird-burst', 'Sound/gugu-bird-burst.mp3');
+        this.load.audio('gugu-spiral-fire', 'Sound/gugu-spiral-fire.mp3');
+        this.load.audio('gugu-spiral-freeze', 'Sound/gugu-spiral-freeze.mp3');
+        this.load.audio('gugu-bgm', 'Sound/gugu-bgm.mp3');
+        this.load.audio('freezer-bgm', 'Sound/freezer-bgm.mp3');
+        this.load.audio('freezer-p1-wave', 'Sound/freezer-p1-wave.mp3');
+        this.load.audio('freezer-p1-wall', 'Sound/freezer-p1-wall.mp3');
+        this.load.audio('freezer-p23-wind', 'Sound/freezer-p23-wind.mp3');
+        this.load.audio('freezer-p3-blade', 'Sound/freezer-p3-blade.mp3');
+        this.load.audio('freezer-p3-derive', 'Sound/freezer-p3-derive.mp3');
+    }
+
     create() {
         this.cameras.main.setBackgroundColor('#1a1a2e');
 

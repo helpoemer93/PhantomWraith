@@ -788,6 +788,9 @@ class PatternLabScene extends Phaser.Scene {
     }
 
     spawnOrbCarrier(originX, originY, angleDeg, spec) {
+        if (this.cache.audio.exists('gugu-vortex')) {
+            this.sound.play('gugu-vortex', { volume: 0.4 });
+        }
         const target = this.getActivePlayerPos();
         const dx = target.x - originX;
         const dy = target.y - originY;
@@ -865,6 +868,9 @@ class PatternLabScene extends Phaser.Scene {
         this.bossBullets.children.each((b) => {
             if (!b || !b.body || !b.isOrbCarrier) return;
             if (time - b.spawnAt >= b.lifespanMs) {
+                if (this.cache.audio.exists('gugu-scatter')) {
+                    this.sound.play('gugu-scatter', { volume: 0.4 });
+                }
                 const cx = b.x;
                 const cy = b.y;
                 const fwdSpeed = b.spinForwardSpeed;
@@ -951,6 +957,7 @@ class PatternLabScene extends Phaser.Scene {
         tri.bladeHeight = h;
         tri.derive = spec.derive;
         tri.lastDeriveTime = this.time.now;
+        tri.bladeSpawnTime = this.time.now;
         return tri;
     }
 
@@ -968,6 +975,10 @@ class PatternLabScene extends Phaser.Scene {
             const backAngle = b.bladeAngleDeg + 180;
             const offset = cfg.angleOffsetDeg ?? 30;
             const count = cfg.childrenPerBurst ?? 2;
+            if (this.cache.audio.exists('freezer-p3-derive') &&
+                time - b.bladeSpawnTime < 1500) {
+                this.sound.play('freezer-p3-derive', { volume: 0.05 });
+            }
             for (let i = 0; i < count; i += 1) {
                 const sign = (i % 2 === 0) ? -1 : 1;
                 const angleDeg = backAngle + sign * offset;
@@ -1146,6 +1157,9 @@ class PatternLabScene extends Phaser.Scene {
 
     spawnBirdEmitters(spec) {
         this.despawnBirdEmitters();
+        if (this.cache.audio.exists('gugu-bird-burst')) {
+            this.sound.play('gugu-bird-burst', { volume: 0.4 });
+        }
         this.birdEmitterSpec = spec;
         this.birdActivateLastTime = this.time.now - (spec.activateIntervalMs ?? 7000);
     }
@@ -1319,6 +1333,16 @@ class PatternLabScene extends Phaser.Scene {
     }
 
     fireDecelSpiralBurst(cfg, angularSign) {
+        if (this.cache.audio.exists('gugu-spiral-fire')) {
+            this.sound.play('gugu-spiral-fire', { volume: 0.4, seek: 0.3 });
+        }
+        if (this.decelSpiralFreezeTimer) this.decelSpiralFreezeTimer.remove();
+        this.decelSpiralFreezeTimer = this.time.delayedCall(3500, () => {
+            if (this.cache.audio.exists('gugu-spiral-freeze')) {
+                this.sound.play('gugu-spiral-freeze', { volume: 0.4 });
+            }
+            this.decelSpiralFreezeTimer = null;
+        });
         const c = cfg ?? {};
         const originX = this.boss.sprite.x;
         const originY = this.boss.sprite.y;

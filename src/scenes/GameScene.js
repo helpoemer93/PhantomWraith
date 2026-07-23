@@ -89,6 +89,15 @@ class GameScene extends Phaser.Scene {
         this.bossLevel = Math.max(1, Math.min(selectedLevel, MAX_WEAPON_LEVEL));
         this.boss = new Boss(this, Stages[clampedStage], this.bossLevel);
 
+        // 보스별 BGM: <boss.id>-bgm 키 규칙. 있으면 loop 재생, 씬 종료 시 정지.
+        this.bossBgm = null;
+        const bgmKey = `${this.boss.data.id}-bgm`;
+        if (this.cache.audio.exists(bgmKey)) {
+            this.bossBgm = this.sound.add(bgmKey, { loop: true, volume: 0.2 });
+            this.bossBgm.play();
+        }
+        this.events.once('shutdown', () => this.stopBossBgm());
+
         this.physics.add.overlap(
             this.player1.sprite, this.bossBullets,
             (s, b) => this.onPlayerHit(this.player1, b)
@@ -219,8 +228,36 @@ class GameScene extends Phaser.Scene {
             : new BotLogger();
     }
 
+    stopBossBgm() {
+        if (this.bossBgm) {
+            this.bossBgm.stop();
+            this.bossBgm.destroy();
+            this.bossBgm = null;
+        }
+        if (this.freezerWindLoop) {
+            this.freezerWindLoop.stop();
+            this.freezerWindLoop.destroy();
+            this.freezerWindLoop = null;
+        }
+        // 재생 중이던 SFX(날개짓·회오리 등)도 즉시 정지
+        this.sound.stopAll();
+    }
+
+    startFreezerWind() {
+        if (this.freezerWindLoop) return;
+        if (!this.cache.audio.exists('freezer-p23-wind')) return;
+        this.freezerWindLoop = this.sound.add('freezer-p23-wind', { loop: true, volume: 0 });
+        this.freezerWindLoop.play();
+        this.tweens.add({
+            targets: this.freezerWindLoop,
+            volume: 0.2,
+            duration: 4000,
+        });
+    }
+
     update(time, delta) {
         if (Phaser.Input.Keyboard.JustDown(this.escKey)) {
+            this.stopBossBgm();
             this.scene.start('BootScene');
             return;
         }
@@ -418,10 +455,12 @@ class GameScene extends Phaser.Scene {
                 this.botDumped = true;
             }
             if (this.clearAdvanceAt !== null && time >= this.clearAdvanceAt) {
+                this.stopBossBgm();
                 this.scene.start('BossSelectScene');
                 return;
             }
             if (Phaser.Input.Keyboard.JustDown(this.restartKey)) {
+                this.stopBossBgm();
                 this.scene.start('BossSelectScene');
             }
             return;
@@ -432,6 +471,7 @@ class GameScene extends Phaser.Scene {
                 this.botDumped = true;
             }
             if (Phaser.Input.Keyboard.JustDown(this.restartKey)) {
+                this.stopBossBgm();
                 this.scene.start('BossSelectScene');
             }
             return;
@@ -556,6 +596,18 @@ class GameScene extends Phaser.Scene {
     }
 
     fireDecelSpiralBurst(cfg, angularSign) {
+        if (this.cache.audio.exists('gugu-spiral-fire')) {
+            // seek: 파일 앞부분 무음 스킵 (초 단위)
+            this.sound.play('gugu-spiral-fire', { volume: 0.4, seek: 0.3 });
+        }
+        // 발사 후 2초 뒤 freeze 사운드 (조정 가능)
+        if (this.decelSpiralFreezeTimer) this.decelSpiralFreezeTimer.remove();
+        this.decelSpiralFreezeTimer = this.time.delayedCall(3500, () => {
+            if (this.cache.audio.exists('gugu-spiral-freeze')) {
+                this.sound.play('gugu-spiral-freeze', { volume: 0.4 });
+            }
+            this.decelSpiralFreezeTimer = null;
+        });
         const originX = this.boss.sprite.x;
         const originY = this.boss.sprite.y;
         const count = cfg.count ?? 5;
@@ -703,6 +755,9 @@ class GameScene extends Phaser.Scene {
     }
 
     spawnOrbCarrier(originX, originY, angleDeg, spec) {
+        if (this.cache.audio.exists('gugu-vortex')) {
+            this.sound.play('gugu-vortex', { volume: 0.4 });
+        }
         const target = this.getActivePlayerPos();
         const dx = target.x - originX;
         const dy = target.y - originY;
@@ -778,6 +833,9 @@ class GameScene extends Phaser.Scene {
         this.bossBullets.children.each((b) => {
             if (!b || !b.body || !b.isOrbCarrier) return;
             if (time - b.spawnAt >= b.lifespanMs) {
+                if (this.cache.audio.exists('gugu-scatter')) {
+                    this.sound.play('gugu-scatter', { volume: 0.4 });
+                }
                 const cx = b.x;
                 const cy = b.y;
                 const fwdSpeed = b.spinForwardSpeed;
@@ -869,6 +927,9 @@ class GameScene extends Phaser.Scene {
         this.despawnBirdEmitters();
         this.birdEmitterSpec = spec;
         this.birdActivateLastTime = this.time.now - (spec.activateIntervalMs ?? 7000);
+        if (this.cache.audio.exists('gugu-bird-burst')) {
+            this.sound.play('gugu-bird-burst', { volume: 0.4 });
+        }
     }
 
     despawnBirdEmitters() {
@@ -988,6 +1049,7 @@ class GameScene extends Phaser.Scene {
         tri.bladeHeight = h;
         tri.derive = spec.derive;
         tri.lastDeriveTime = this.time.now;
+        tri.bladeSpawnTime = this.time.now;
         return tri;
     }
 
@@ -1005,6 +1067,10 @@ class GameScene extends Phaser.Scene {
             const backAngle = b.bladeAngleDeg + 180;
             const offset = cfg.angleOffsetDeg ?? 30;
             const count = cfg.childrenPerBurst ?? 2;
+            if (this.cache.audio.exists('freezer-p3-derive') &&
+                time - b.bladeSpawnTime < 1500) {
+                this.sound.play('freezer-p3-derive', { volume: 0.05 });
+            }
             for (let i = 0; i < count; i += 1) {
                 const sign = (i % 2 === 0) ? -1 : 1;
                 const angleDeg = backAngle + sign * offset;
