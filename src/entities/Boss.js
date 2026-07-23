@@ -21,12 +21,29 @@ class Boss {
         const startX = GameConfig.GAME_WIDTH / 2;
         const startY = data.startY ?? 140;
 
-        this.sprite = scene.add.rectangle(
-            startX, startY, data.size, data.size, data.color
-        );
-        scene.physics.add.existing(this.sprite);
-        this.sprite.body.setImmovable(true);
-        this.sprite.body.setSize(data.size, data.size);
+        if (data.id === 'gugu' && scene.textures.exists('gugu-sprite')) {
+            if (!scene.anims.exists('gugu-fly')) {
+                scene.anims.create({
+                    key: 'gugu-fly',
+                    frames: scene.anims.generateFrameNumbers('gugu-sprite', { start: 0, end: 35 }),
+                    frameRate: 20,
+                    repeat: -1,
+                });
+            }
+            this.sprite = scene.add.sprite(startX, startY, 'gugu-sprite');
+            this.sprite.play('gugu-fly');
+            this.sprite.setDisplaySize(data.size * 2, data.size * 2 * (364 / 632));
+            scene.physics.add.existing(this.sprite);
+            this.sprite.body.setImmovable(true);
+            this.sprite.body.setSize(data.size, data.size);
+        } else {
+            this.sprite = scene.add.rectangle(
+                startX, startY, data.size, data.size, data.color
+            );
+            scene.physics.add.existing(this.sprite);
+            this.sprite.body.setImmovable(true);
+            this.sprite.body.setSize(data.size, data.size);
+        }
 
         this.spawnTime = scene.time.now;
         if (!opts || opts.autoStart !== false) {

@@ -20,6 +20,12 @@ class BootScene extends Phaser.Scene {
         this.load.audio('freezer-p3-derive', 'Sound/freezer-p3-derive.mp3');
         this.load.audio('metagross-bgm', 'Sound/metagross-bgm.mp3');
         this.load.audio('suicune-bgm', 'Sound/suicune-bgm.mp3');
+
+        this.load.spritesheet(
+            'gugu-sprite',
+            'Image/sprite-max-px-frames-36-rows-6-cols-6.png',
+            { frameWidth: 632, frameHeight: 364 },
+        );
     }
 
     create() {
