@@ -557,6 +557,7 @@ class PatternLabScene extends Phaser.Scene {
             if (!p) continue;
             p.sprite.destroy();
             p.outline.destroy();
+            p.hitboxDot.destroy();
             for (const o of p.orbitOrbs) o.destroy();
         }
         this.player1 = null;

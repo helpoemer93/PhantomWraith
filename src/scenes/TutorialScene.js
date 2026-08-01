@@ -148,6 +148,8 @@ class TutorialScene extends Phaser.Scene {
         this.player2.sprite.body.setVelocity(0, 0);
         this.player1.outline.setPosition(this.startPosP1.x, this.startPosP1.y);
         this.player2.outline.setPosition(this.startPosP2.x, this.startPosP2.y);
+        this.player1.hitboxDot.setPosition(this.startPosP1.x, this.startPosP1.y);
+        this.player2.hitboxDot.setPosition(this.startPosP2.x, this.startPosP2.y);
     }
 
     createStaticWall(y) {

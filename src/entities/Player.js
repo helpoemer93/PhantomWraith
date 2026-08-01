@@ -19,18 +19,31 @@ class Player {
 
         const size = this.size;
 
-        this.sprite = scene.add.rectangle(x, y, size, size, color);
+        let spriteKey = null;
+        if (color === GameConfig.PLAYER_1_COLOR && scene.textures.exists('latias-sprite')) {
+            spriteKey = 'latias-sprite';
+        } else if (color === GameConfig.PLAYER_2_COLOR && scene.textures.exists('latios-sprite')) {
+            spriteKey = 'latios-sprite';
+        }
+        if (spriteKey) {
+            this.sprite = scene.add.sprite(x, y, spriteKey);
+            this.sprite.setDisplaySize(size * (51 / 31) * 1.3, size * 1.3);
+        } else {
+            this.sprite = scene.add.rectangle(x, y, size, size, color);
+        }
         scene.physics.add.existing(this.sprite);
         this.sprite.body.setCollideWorldBounds(true);
         this.sprite.body.setSize(size, size);
+        this.sprite.body.setCircle(size / 2);
 
-        this.outline = scene.add.rectangle(x, y, size + 8, size + 8);
+        this.outline = scene.add.circle(x, y, size + 6, 0, 0);
         this.outline.setStrokeStyle(
             GameConfig.INVINCIBLE_STROKE_WIDTH,
             GameConfig.INVINCIBLE_STROKE_COLOR
         );
-        this.outline.setFillStyle();
         this.outline.setVisible(startInvincible);
+
+        this.hitboxDot = scene.add.circle(x, y, size / 2, 0xffffff, 0.35);
 
         if (initialSlots) {
             for (let i = 0; i < initialSlots.length && i < this.slots.length; i += 1) {
@@ -39,6 +52,18 @@ class Player {
             }
         }
         this.rebuildOrbits();
+
+        this.postSync = () => {
+            if (!this.sprite.active) return;
+            this.hitboxDot.setPosition(this.sprite.x, this.sprite.y);
+            if (this.outline.visible) {
+                this.outline.setPosition(this.sprite.x, this.sprite.y);
+            }
+        };
+        scene.events.on(Phaser.Scenes.Events.POST_UPDATE, this.postSync);
+        scene.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+            scene.events.off(Phaser.Scenes.Events.POST_UPDATE, this.postSync);
+        });
     }
 
     equipSlot(slotIndex, weaponId) {
@@ -90,7 +115,13 @@ class Player {
         else if (this.keys.down.isDown) vy = speed;
         this.sprite.body.setVelocity(vx, vy);
 
-        this.outline.setPosition(this.sprite.x, this.sprite.y);
+        const auraOn = this.isInvincible || time < this.hitImmunityUntil;
+        this.outline.setVisible(auraOn);
+        if (auraOn) {
+            const phase = Math.sin(time * 0.006);
+            this.outline.setScale(1.0 + 0.15 * phase);
+            this.outline.setAlpha(0.55 + 0.35 * phase);
+        }
 
         if (time < this.hitImmunityUntil) {
             const blink = 0.35 + 0.45 * Math.abs(Math.sin(time * 0.02));
