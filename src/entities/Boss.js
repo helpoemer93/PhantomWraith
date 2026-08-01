@@ -25,14 +25,44 @@ class Boss {
             if (!scene.anims.exists('gugu-fly')) {
                 scene.anims.create({
                     key: 'gugu-fly',
-                    frames: scene.anims.generateFrameNumbers('gugu-sprite', { start: 0, end: 35 }),
-                    frameRate: 20,
+                    frames: scene.anims.generateFrameNumbers('gugu-sprite', { start: 0, end: 1 }),
+                    frameRate: 3,
                     repeat: -1,
                 });
             }
             this.sprite = scene.add.sprite(startX, startY, 'gugu-sprite');
             this.sprite.play('gugu-fly');
-            this.sprite.setDisplaySize(data.size * 2, data.size * 2 * (364 / 632));
+            this.sprite.setDisplaySize(data.size * 2, data.size * 2 * (369 / 677));
+            scene.physics.add.existing(this.sprite);
+            this.sprite.body.setImmovable(true);
+            this.sprite.body.setSize(data.size, data.size);
+        } else if (data.id === 'freezer' && scene.textures.exists('freezer-sprite')) {
+            if (!scene.anims.exists('freezer-fly')) {
+                scene.anims.create({
+                    key: 'freezer-fly',
+                    frames: scene.anims.generateFrameNumbers('freezer-sprite', { start: 0, end: 1 }),
+                    frameRate: 3,
+                    repeat: -1,
+                });
+            }
+            this.sprite = scene.add.sprite(startX, startY, 'freezer-sprite');
+            this.sprite.play('freezer-fly');
+            this.sprite.setDisplaySize(data.size * 2, data.size * 2 * (369 / 677));
+            scene.physics.add.existing(this.sprite);
+            this.sprite.body.setImmovable(true);
+            this.sprite.body.setSize(data.size, data.size);
+        } else if (data.id === 'metagross' && scene.textures.exists('metagross-sprite')) {
+            if (!scene.anims.exists('metagross-slam')) {
+                scene.anims.create({
+                    key: 'metagross-slam',
+                    frames: scene.anims.generateFrameNumbers('metagross-sprite', { start: 0, end: 3 }),
+                    frameRate: 3,
+                    repeat: -1,
+                });
+            }
+            this.sprite = scene.add.sprite(startX, startY, 'metagross-sprite');
+            this.sprite.play('metagross-slam');
+            this.sprite.setDisplaySize(data.size * 2, data.size * 2 * (369 / 676));
             scene.physics.add.existing(this.sprite);
             this.sprite.body.setImmovable(true);
             this.sprite.body.setSize(data.size, data.size);

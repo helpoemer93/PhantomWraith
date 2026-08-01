@@ -23,8 +23,18 @@ class BootScene extends Phaser.Scene {
 
         this.load.spritesheet(
             'gugu-sprite',
-            'Image/sprite-max-px-frames-36-rows-6-cols-6.png',
-            { frameWidth: 632, frameHeight: 364 },
+            'Image/gugu-sprite-2f.png',
+            { frameWidth: 677, frameHeight: 369 },
+        );
+        this.load.spritesheet(
+            'freezer-sprite',
+            'Image/freezer-sprite-2f.png',
+            { frameWidth: 677, frameHeight: 369 },
+        );
+        this.load.spritesheet(
+            'metagross-sprite',
+            'Image/metagross-sprite-4f.png',
+            { frameWidth: 676, frameHeight: 369 },
         );
     }
 
