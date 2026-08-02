@@ -37,14 +37,14 @@ class BulletPattern {
 
     fire() {
         const name = this.spec.name;
-        if (name && name.endsWith('wave12') && this.scene.cache.audio.exists('freezer-p1-wave')) {
-            this.scene.sound.play('freezer-p1-wave', { volume: 0.05 });
+        if (name && name.endsWith('wave12')) {
+            AudioSettings.playSfx(this.scene, 'freezer-p1-wave', { volume: 0.05 });
         }
-        if (name && name.endsWith('wall360') && this.scene.cache.audio.exists('freezer-p1-wall')) {
-            this.scene.sound.play('freezer-p1-wall', { volume: 0.25 });
+        if (name && name.endsWith('wall360')) {
+            AudioSettings.playSfx(this.scene, 'freezer-p1-wall', { volume: 0.25 });
         }
-        if (name === 'p3_blade' && this.scene.cache.audio.exists('freezer-p3-blade')) {
-            this.scene.sound.play('freezer-p3-blade', { volume: 0.35 });
+        if (name === 'p3_blade') {
+            AudioSettings.playSfx(this.scene, 'freezer-p3-blade', { volume: 0.35 });
         }
         const count = this.spec.count ?? 1;
         const angleSpreadDeg = this.spec.angleSpreadDeg ?? 0;

@@ -789,9 +789,7 @@ class PatternLabScene extends Phaser.Scene {
     }
 
     spawnOrbCarrier(originX, originY, angleDeg, spec) {
-        if (this.cache.audio.exists('gugu-vortex')) {
-            this.sound.play('gugu-vortex', { volume: 0.4 });
-        }
+        AudioSettings.playSfx(this, 'gugu-vortex', { volume: 0.4 });
         const target = this.getActivePlayerPos();
         const dx = target.x - originX;
         const dy = target.y - originY;
@@ -869,9 +867,7 @@ class PatternLabScene extends Phaser.Scene {
         this.bossBullets.children.each((b) => {
             if (!b || !b.body || !b.isOrbCarrier) return;
             if (time - b.spawnAt >= b.lifespanMs) {
-                if (this.cache.audio.exists('gugu-scatter')) {
-                    this.sound.play('gugu-scatter', { volume: 0.4 });
-                }
+                AudioSettings.playSfx(this, 'gugu-scatter', { volume: 0.4 });
                 const cx = b.x;
                 const cy = b.y;
                 const fwdSpeed = b.spinForwardSpeed;
@@ -976,9 +972,8 @@ class PatternLabScene extends Phaser.Scene {
             const backAngle = b.bladeAngleDeg + 180;
             const offset = cfg.angleOffsetDeg ?? 30;
             const count = cfg.childrenPerBurst ?? 2;
-            if (this.cache.audio.exists('freezer-p3-derive') &&
-                time - b.bladeSpawnTime < 1500) {
-                this.sound.play('freezer-p3-derive', { volume: 0.05 });
+            if (time - b.bladeSpawnTime < 1500) {
+                AudioSettings.playSfx(this, 'freezer-p3-derive', { volume: 0.05 });
             }
             for (let i = 0; i < count; i += 1) {
                 const sign = (i % 2 === 0) ? -1 : 1;
@@ -1158,9 +1153,7 @@ class PatternLabScene extends Phaser.Scene {
 
     spawnBirdEmitters(spec) {
         this.despawnBirdEmitters();
-        if (this.cache.audio.exists('gugu-bird-burst')) {
-            this.sound.play('gugu-bird-burst', { volume: 0.4 });
-        }
+        AudioSettings.playSfx(this, 'gugu-bird-burst', { volume: 0.4 });
         this.birdEmitterSpec = spec;
         this.birdActivateLastTime = this.time.now - (spec.activateIntervalMs ?? 7000);
     }
@@ -1334,14 +1327,10 @@ class PatternLabScene extends Phaser.Scene {
     }
 
     fireDecelSpiralBurst(cfg, angularSign) {
-        if (this.cache.audio.exists('gugu-spiral-fire')) {
-            this.sound.play('gugu-spiral-fire', { volume: 0.4, seek: 0.3 });
-        }
+        AudioSettings.playSfx(this, 'gugu-spiral-fire', { volume: 0.4, seek: 0.3 });
         if (this.decelSpiralFreezeTimer) this.decelSpiralFreezeTimer.remove();
         this.decelSpiralFreezeTimer = this.time.delayedCall(3500, () => {
-            if (this.cache.audio.exists('gugu-spiral-freeze')) {
-                this.sound.play('gugu-spiral-freeze', { volume: 0.4 });
-            }
+            AudioSettings.playSfx(this, 'gugu-spiral-freeze', { volume: 0.4 });
             this.decelSpiralFreezeTimer = null;
         });
         const c = cfg ?? {};
@@ -2299,11 +2288,36 @@ class PatternLabScene extends Phaser.Scene {
         const bossSize = this.boss.data.size ?? 44;
         const startX = bx;
         const startY = by + bossSize / 2 + rSpec.radius + 6;
-        const r = this.add.circle(startX, startY, rSpec.radius, rSpec.color);
-        r.setStrokeStyle(2, rSpec.strokeColor ?? 0x664400);
+        let r;
+        if (this.textures.exists('raikou-sprite')) {
+            if (!this.anims.exists('raikou-down')) {
+                this.anims.create({ key: 'raikou-down',
+                    frames: this.anims.generateFrameNumbers('raikou-sprite', { start: 0, end: 2 }),
+                    frameRate: 6, repeat: -1 });
+                this.anims.create({ key: 'raikou-left',
+                    frames: this.anims.generateFrameNumbers('raikou-sprite', { start: 3, end: 5 }),
+                    frameRate: 6, repeat: -1 });
+                this.anims.create({ key: 'raikou-up',
+                    frames: this.anims.generateFrameNumbers('raikou-sprite', { start: 6, end: 8 }),
+                    frameRate: 6, repeat: -1 });
+            }
+            r = this.add.sprite(startX, startY, 'raikou-sprite');
+            r.play('raikou-down');
+            r.setDisplaySize(rSpec.radius * 4, rSpec.radius * 4);
+            r.isSprite = true;
+            r.facingDir = 'down';
+        } else {
+            r = this.add.circle(startX, startY, rSpec.radius, rSpec.color);
+            r.setStrokeStyle(2, rSpec.strokeColor ?? 0x664400);
+            r.isSprite = false;
+        }
         r.setDepth(35);
         this.physics.add.existing(r);
-        r.body.setCircle(rSpec.radius);
+        if (r.isSprite) {
+            r.body.setCircle(rSpec.radius, 20 - rSpec.radius, 20 - rSpec.radius);
+        } else {
+            r.body.setCircle(rSpec.radius);
+        }
         r.body.setImmovable(true);
         r.spec = rSpec;
         r.state = 'aiming';
@@ -2389,9 +2403,23 @@ class PatternLabScene extends Phaser.Scene {
             } else {
                 r.x += (dx / dist) * step;
                 r.y += (dy / dist) * step;
+                this.setBeastFacing(r, dx, dy, 'raikou');
             }
         }
         this.renderRaikouOverlays(time);
+    }
+
+    setBeastFacing(sprite, dx, dy, keyPrefix) {
+        if (!sprite.isSprite) return;
+        if (Math.abs(dx) < 0.01 && Math.abs(dy) < 0.01) return;
+        const dir = Math.abs(dx) >= Math.abs(dy)
+            ? (dx < 0 ? 'left' : 'right')
+            : (dy < 0 ? 'up' : 'down');
+        if (dir === sprite.facingDir) return;
+        sprite.facingDir = dir;
+        const animKey = dir === 'right' ? `${keyPrefix}-left` : `${keyPrefix}-${dir}`;
+        sprite.play(animKey, true);
+        sprite.setFlipX(dir === 'right');
     }
 
     computeRaikouAim(r) {
@@ -2409,6 +2437,7 @@ class PatternLabScene extends Phaser.Scene {
         const end = this.raikouWallIntersect(r.x, r.y, r.aimVecX, r.aimVecY);
         r.aimEndX = end.x;
         r.aimEndY = end.y;
+        this.setBeastFacing(r, r.aimVecX, r.aimVecY, 'raikou');
     }
 
     raikouWallIntersect(x, y, vx, vy) {
@@ -2707,12 +2736,38 @@ class PatternLabScene extends Phaser.Scene {
         const by = this.boss.sprite.y;
         const startY = by + (spec.startOffsetY ?? -30);
         const targetY = by + (spec.targetOffsetY ?? 34);
-        const e = this.add.circle(bx, startY, spec.radius ?? 18, spec.color ?? 0xff6644);
-        e.setStrokeStyle(2, spec.strokeColor ?? 0x883322);
+        const eRadius = spec.radius ?? 18;
+        let e;
+        if (this.textures.exists('entei-sprite')) {
+            if (!this.anims.exists('entei-down')) {
+                this.anims.create({ key: 'entei-down',
+                    frames: this.anims.generateFrameNumbers('entei-sprite', { start: 0, end: 2 }),
+                    frameRate: 6, repeat: -1 });
+                this.anims.create({ key: 'entei-left',
+                    frames: this.anims.generateFrameNumbers('entei-sprite', { start: 3, end: 5 }),
+                    frameRate: 6, repeat: -1 });
+                this.anims.create({ key: 'entei-up',
+                    frames: this.anims.generateFrameNumbers('entei-sprite', { start: 6, end: 8 }),
+                    frameRate: 6, repeat: -1 });
+            }
+            e = this.add.sprite(bx, startY, 'entei-sprite');
+            e.play('entei-down');
+            e.setDisplaySize(eRadius * 4, eRadius * 4);
+            e.isSprite = true;
+            e.facingDir = 'down';
+        } else {
+            e = this.add.circle(bx, startY, eRadius, spec.color ?? 0xff6644);
+            e.setStrokeStyle(2, spec.strokeColor ?? 0x883322);
+            e.isSprite = false;
+        }
         e.setDepth(30);
         e.setAlpha(spec.startAlpha ?? 0.25);
         this.physics.add.existing(e);
-        e.body.setCircle(spec.radius ?? 18);
+        if (e.isSprite) {
+            e.body.setCircle(eRadius, 20 - eRadius, 20 - eRadius);
+        } else {
+            e.body.setCircle(eRadius);
+        }
         e.body.setImmovable(true);
         e.spec = spec;
         e.state = 'entering';
@@ -2791,6 +2846,7 @@ class PatternLabScene extends Phaser.Scene {
             } else {
                 e.x += (dx / dist) * step;
                 e.y += (dy / dist) * step;
+                this.setBeastFacing(e, dx, dy, 'entei');
             }
         }
         this.renderEnteiOverlays(time);
@@ -2823,6 +2879,7 @@ class PatternLabScene extends Phaser.Scene {
         const end = this.enteiWallIntersect(e.x, e.y, e.aimVecX, e.aimVecY, e.spec.radius);
         e.aimEndX = end.x;
         e.aimEndY = end.y;
+        this.setBeastFacing(e, e.aimVecX, e.aimVecY, 'entei');
     }
 
     enteiWallIntersect(x, y, vx, vy, radius) {
@@ -2899,6 +2956,7 @@ class PatternLabScene extends Phaser.Scene {
         if (p) baseRad = Math.atan2(p.sprite.y - e.y, p.sprite.x - e.x);
         else baseRad = Math.PI / 2;
         const baseDeg = Phaser.Math.RadToDeg(baseRad);
+        this.setBeastFacing(e, Math.cos(baseRad), Math.sin(baseRad), 'entei');
         const N = spec.bulletCount ?? 30;
         const spread = spec.spreadDeg ?? 15;
         const a = spec.a ?? 120;

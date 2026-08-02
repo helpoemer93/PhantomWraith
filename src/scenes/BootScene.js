@@ -60,6 +60,7 @@ class BootScene extends Phaser.Scene {
 
     create() {
         this.cameras.main.setBackgroundColor('#1a1a2e');
+        AudioSettings.applyMaster(this);
         BootScene.ensureMenuBgm(this);
 
         if (!this.registry.get('loadout')) {
@@ -128,6 +129,7 @@ class BootScene extends Phaser.Scene {
             { label: '강화 상점', scene: 'UpgradeShopScene' },
             { label: '조작 실습 (튜토리얼)', scene: 'TutorialScene' },
             { label: '패턴 실험실', scene: 'PatternLabScene' },
+            { label: '설정', scene: 'SettingsScene' },
             { label: '게임 초기화', action: 'reset', color: '#ff6666' },
         ];
         this.selectedIndex = 0;
@@ -236,15 +238,32 @@ class BootScene extends Phaser.Scene {
     }
 
     // 메뉴 BGM: 게임 전역 사운드로 한 인스턴스만 유지. 씬 왕복 시 이어서 재생.
+    // __baseVolume 태그로 AudioSettings 팩터 반영 및 실시간 갱신 지원.
     static ensureMenuBgm(scene) {
         if (!scene.cache.audio.exists('menu-bgm')) return;
         let bgm = scene.sound.get('menu-bgm');
-        if (!bgm) bgm = scene.sound.add('menu-bgm', { loop: true, volume: 0.2 });
-        if (!bgm.isPlaying) bgm.play();
+        if (!bgm) {
+            bgm = scene.sound.add('menu-bgm', { loop: true, volume: 0 });
+            bgm.__baseVolume = 0.2;
+        }
+        if (!bgm.isPlaying) {
+            bgm.setVolume(AudioSettings.bgmVolume(bgm.__baseVolume ?? 0.2));
+            bgm.play();
+        }
     }
 
     static stopMenuBgm(scene) {
         const bgm = scene.sound.get('menu-bgm');
         if (bgm && bgm.isPlaying) bgm.stop();
+    }
+
+    // 크로스페이드용: 800ms 동안 볼륨 → 0, 완료 시 stop
+    static fadeOutMenuBgm(scene, durationMs = 800) {
+        const bgm = scene.sound.get('menu-bgm');
+        if (!bgm || !bgm.isPlaying) return;
+        scene.tweens.add({
+            targets: bgm, volume: 0, duration: durationMs,
+            onComplete: () => bgm.stop(),
+        });
     }
 }

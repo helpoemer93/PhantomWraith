@@ -249,7 +249,7 @@ class Boss {
 
         // 구구 기본공격 사운드 (날개짓, 3발 동시라도 함수 1회 호출이라 한 번만 재생됨)
         if (this.data.id === 'gugu' && this.scene.sound && this.scene.cache.audio.exists('gugu-flap')) {
-            this.scene.sound.play('gugu-flap', { volume: 0.35 });
+            AudioSettings.playSfx(this.scene, 'gugu-flap', { volume: 0.35 });
         }
 
         if (cfg.type === 'gearMultiTarget') {
