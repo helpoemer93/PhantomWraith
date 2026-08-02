@@ -5,6 +5,7 @@ class TutorialScene extends Phaser.Scene {
 
     create() {
         this.cameras.main.setBackgroundColor('#161628');
+        BootScene.ensureMenuBgm(this);
 
         const KC = Phaser.Input.Keyboard.KeyCodes;
         const keys1 = this.input.keyboard.addKeys({

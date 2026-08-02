@@ -89,6 +89,8 @@ class GameScene extends Phaser.Scene {
         this.bossLevel = Math.max(1, Math.min(selectedLevel, MAX_WEAPON_LEVEL));
         this.boss = new Boss(this, Stages[clampedStage], this.bossLevel);
 
+        BootScene.stopMenuBgm(this);
+
         // 보스별 BGM: <boss.id>-bgm 키 규칙. 있으면 loop 재생, 씬 종료 시 정지.
         this.bossBgm = null;
         const bgmKey = `${this.boss.data.id}-bgm`;
@@ -2667,11 +2669,36 @@ class GameScene extends Phaser.Scene {
         const bossSize = this.boss.data.size ?? 44;
         const startX = bx;
         const startY = by + bossSize / 2 + rSpec.radius + 6;
-        const r = this.add.circle(startX, startY, rSpec.radius, rSpec.color);
-        r.setStrokeStyle(2, rSpec.strokeColor ?? 0x664400);
+        let r;
+        if (this.textures.exists('raikou-sprite')) {
+            if (!this.anims.exists('raikou-down')) {
+                this.anims.create({ key: 'raikou-down',
+                    frames: this.anims.generateFrameNumbers('raikou-sprite', { start: 0, end: 2 }),
+                    frameRate: 6, repeat: -1 });
+                this.anims.create({ key: 'raikou-left',
+                    frames: this.anims.generateFrameNumbers('raikou-sprite', { start: 3, end: 5 }),
+                    frameRate: 6, repeat: -1 });
+                this.anims.create({ key: 'raikou-up',
+                    frames: this.anims.generateFrameNumbers('raikou-sprite', { start: 6, end: 8 }),
+                    frameRate: 6, repeat: -1 });
+            }
+            r = this.add.sprite(startX, startY, 'raikou-sprite');
+            r.play('raikou-down');
+            r.setDisplaySize(rSpec.radius * 4, rSpec.radius * 4);
+            r.isSprite = true;
+            r.facingDir = 'down';
+        } else {
+            r = this.add.circle(startX, startY, rSpec.radius, rSpec.color);
+            r.setStrokeStyle(2, rSpec.strokeColor ?? 0x664400);
+            r.isSprite = false;
+        }
         r.setDepth(35);
         this.physics.add.existing(r);
-        r.body.setCircle(rSpec.radius);
+        if (r.isSprite) {
+            r.body.setCircle(rSpec.radius, 20 - rSpec.radius, 20 - rSpec.radius);
+        } else {
+            r.body.setCircle(rSpec.radius);
+        }
         r.body.setImmovable(true);
         r.spec = rSpec;
         r.state = 'aiming';
@@ -2796,12 +2823,38 @@ class GameScene extends Phaser.Scene {
         const by = this.boss.sprite.y;
         const startY = by + (spec.startOffsetY ?? -30);
         const targetY = by + (spec.targetOffsetY ?? 34);
-        const e = this.add.circle(bx, startY, spec.radius ?? 18, spec.color ?? 0xff6644);
-        e.setStrokeStyle(2, spec.strokeColor ?? 0x883322);
+        const eRadius = spec.radius ?? 18;
+        let e;
+        if (this.textures.exists('entei-sprite')) {
+            if (!this.anims.exists('entei-down')) {
+                this.anims.create({ key: 'entei-down',
+                    frames: this.anims.generateFrameNumbers('entei-sprite', { start: 0, end: 2 }),
+                    frameRate: 6, repeat: -1 });
+                this.anims.create({ key: 'entei-left',
+                    frames: this.anims.generateFrameNumbers('entei-sprite', { start: 3, end: 5 }),
+                    frameRate: 6, repeat: -1 });
+                this.anims.create({ key: 'entei-up',
+                    frames: this.anims.generateFrameNumbers('entei-sprite', { start: 6, end: 8 }),
+                    frameRate: 6, repeat: -1 });
+            }
+            e = this.add.sprite(bx, startY, 'entei-sprite');
+            e.play('entei-down');
+            e.setDisplaySize(eRadius * 4, eRadius * 4);
+            e.isSprite = true;
+            e.facingDir = 'down';
+        } else {
+            e = this.add.circle(bx, startY, eRadius, spec.color ?? 0xff6644);
+            e.setStrokeStyle(2, spec.strokeColor ?? 0x883322);
+            e.isSprite = false;
+        }
         e.setDepth(30);
         e.setAlpha(spec.startAlpha ?? 0.25);
         this.physics.add.existing(e);
-        e.body.setCircle(spec.radius ?? 18);
+        if (e.isSprite) {
+            e.body.setCircle(eRadius, 20 - eRadius, 20 - eRadius);
+        } else {
+            e.body.setCircle(eRadius);
+        }
         e.body.setImmovable(true);
         e.spec = spec;
         e.state = 'entering';
@@ -2886,6 +2939,7 @@ class GameScene extends Phaser.Scene {
             } else {
                 e.x += (dx / dist) * step;
                 e.y += (dy / dist) * step;
+                this.setBeastFacing(e, dx, dy, 'entei');
             }
         }
         this.renderEnteiOverlays(time);
@@ -2920,6 +2974,7 @@ class GameScene extends Phaser.Scene {
         const end = this.enteiWallIntersect(e.x, e.y, e.aimVecX, e.aimVecY, e.spec.radius);
         e.aimEndX = end.x;
         e.aimEndY = end.y;
+        this.setBeastFacing(e, e.aimVecX, e.aimVecY, 'entei');
     }
 
     enteiWallIntersect(x, y, vx, vy, radius) {
@@ -3010,6 +3065,7 @@ class GameScene extends Phaser.Scene {
         if (p) baseRad = Math.atan2(p.sprite.y - e.y, p.sprite.x - e.x);
         else baseRad = Math.PI / 2; // 폴백: 아래쪽
         const baseDeg = Phaser.Math.RadToDeg(baseRad);
+        this.setBeastFacing(e, Math.cos(baseRad), Math.sin(baseRad), 'entei');
         const N = spec.bulletCount ?? 30;
         const spread = spec.spreadDeg ?? 15;
         const a = spec.a ?? 120;
@@ -3137,9 +3193,23 @@ class GameScene extends Phaser.Scene {
             } else {
                 r.x += (dx / dist) * step;
                 r.y += (dy / dist) * step;
+                this.setBeastFacing(r, dx, dy, 'raikou');
             }
         }
         this.renderRaikouOverlays(time);
+    }
+
+    setBeastFacing(sprite, dx, dy, keyPrefix) {
+        if (!sprite.isSprite) return;
+        if (Math.abs(dx) < 0.01 && Math.abs(dy) < 0.01) return;
+        const dir = Math.abs(dx) >= Math.abs(dy)
+            ? (dx < 0 ? 'left' : 'right')
+            : (dy < 0 ? 'up' : 'down');
+        if (dir === sprite.facingDir) return;
+        sprite.facingDir = dir;
+        const animKey = dir === 'right' ? `${keyPrefix}-left` : `${keyPrefix}-${dir}`;
+        sprite.play(animKey, true);
+        sprite.setFlipX(dir === 'right');
     }
 
     computeRaikouAim(r) {
@@ -3161,6 +3231,7 @@ class GameScene extends Phaser.Scene {
         const end = this.raikouWallIntersect(r.x, r.y, r.aimVecX, r.aimVecY);
         r.aimEndX = end.x;
         r.aimEndY = end.y;
+        this.setBeastFacing(r, r.aimVecX, r.aimVecY, 'raikou');
     }
 
     raikouWallIntersect(x, y, vx, vy) {

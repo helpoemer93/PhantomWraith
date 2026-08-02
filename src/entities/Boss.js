@@ -66,6 +66,50 @@ class Boss {
             scene.physics.add.existing(this.sprite);
             this.sprite.body.setImmovable(true);
             this.sprite.body.setSize(data.size, data.size);
+        } else if (data.id === 'suicune' && scene.textures.exists('suicune-sprite')) {
+            if (!scene.anims.exists('suicune-down')) {
+                scene.anims.create({
+                    key: 'suicune-down',
+                    frames: scene.anims.generateFrameNumbers('suicune-sprite', { start: 0, end: 2 }),
+                    frameRate: 6, repeat: -1,
+                });
+                scene.anims.create({
+                    key: 'suicune-left',
+                    frames: scene.anims.generateFrameNumbers('suicune-sprite', { start: 3, end: 5 }),
+                    frameRate: 6, repeat: -1,
+                });
+                scene.anims.create({
+                    key: 'suicune-up',
+                    frames: scene.anims.generateFrameNumbers('suicune-sprite', { start: 6, end: 8 }),
+                    frameRate: 6, repeat: -1,
+                });
+            }
+            this.sprite = scene.add.sprite(startX, startY, 'suicune-sprite');
+            this.sprite.play('suicune-down');
+            this.sprite.setDisplaySize(data.size * 2, data.size * 2);
+            scene.physics.add.existing(this.sprite);
+            this.sprite.body.setImmovable(true);
+            this.sprite.body.setSize(data.size, data.size);
+            this.facingDir = 'down';
+            this.prevPosX = startX;
+            this.prevPosY = startY;
+            this.updateFacing = () => {
+                const dx = this.sprite.x - this.prevPosX;
+                const dy = this.sprite.y - this.prevPosY;
+                if (Math.abs(dx) > 0.1 || Math.abs(dy) > 0.1) {
+                    const newDir = Math.abs(dx) >= Math.abs(dy)
+                        ? (dx < 0 ? 'left' : 'right')
+                        : (dy < 0 ? 'up' : 'down');
+                    if (newDir !== this.facingDir) {
+                        this.facingDir = newDir;
+                        const key = newDir === 'right' ? 'suicune-left' : `suicune-${newDir}`;
+                        this.sprite.play(key, true);
+                        this.sprite.setFlipX(newDir === 'right');
+                    }
+                }
+                this.prevPosX = this.sprite.x;
+                this.prevPosY = this.sprite.y;
+            };
         } else {
             this.sprite = scene.add.rectangle(
                 startX, startY, data.size, data.size, data.color
@@ -156,6 +200,8 @@ class Boss {
         } else if (type === 'fixed') {
             // no movement
         }
+
+        if (this.updateFacing) this.updateFacing();
 
         this.activePatterns = this.activePatterns.filter((p) => p.update(time, delta));
 

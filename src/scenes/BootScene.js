@@ -20,6 +20,7 @@ class BootScene extends Phaser.Scene {
         this.load.audio('freezer-p3-derive', 'Sound/freezer-p3-derive.mp3');
         this.load.audio('metagross-bgm', 'Sound/metagross-bgm.mp3');
         this.load.audio('suicune-bgm', 'Sound/suicune-bgm.mp3');
+        this.load.audio('menu-bgm', 'Sound/Starlight Drift.mp3');
 
         this.load.spritesheet(
             'gugu-sprite',
@@ -39,10 +40,27 @@ class BootScene extends Phaser.Scene {
 
         this.load.image('latias-sprite', 'Image/latias-sprite-1f.png');
         this.load.image('latios-sprite', 'Image/latios-sprite-1f.png');
+
+        this.load.spritesheet(
+            'suicune-sprite',
+            'Image/suicune-sprite-9f.png',
+            { frameWidth: 40, frameHeight: 40 },
+        );
+        this.load.spritesheet(
+            'raikou-sprite',
+            'Image/raikou-sprite-9f.png',
+            { frameWidth: 40, frameHeight: 40 },
+        );
+        this.load.spritesheet(
+            'entei-sprite',
+            'Image/entei-sprite-9f.png',
+            { frameWidth: 40, frameHeight: 40 },
+        );
     }
 
     create() {
         this.cameras.main.setBackgroundColor('#1a1a2e');
+        BootScene.ensureMenuBgm(this);
 
         if (!this.registry.get('loadout')) {
             const saved = Storage.load();
@@ -215,5 +233,18 @@ class BootScene extends Phaser.Scene {
             t.setText(selected ? `▶  ${item.label}` : `    ${item.label}`);
             t.setColor(selected ? '#ffee00' : (item.color ?? '#aaaaaa'));
         });
+    }
+
+    // 메뉴 BGM: 게임 전역 사운드로 한 인스턴스만 유지. 씬 왕복 시 이어서 재생.
+    static ensureMenuBgm(scene) {
+        if (!scene.cache.audio.exists('menu-bgm')) return;
+        let bgm = scene.sound.get('menu-bgm');
+        if (!bgm) bgm = scene.sound.add('menu-bgm', { loop: true, volume: 0.2 });
+        if (!bgm.isPlaying) bgm.play();
+    }
+
+    static stopMenuBgm(scene) {
+        const bgm = scene.sound.get('menu-bgm');
+        if (bgm && bgm.isPlaying) bgm.stop();
     }
 }
