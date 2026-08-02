@@ -11,6 +11,8 @@ class GameScene extends Phaser.Scene {
         this.gameOver = false;
         this.cleared = false;
         this.clearAdvanceAt = null;
+        this.__gameOverMessageShown = false;
+        this.prevLives = undefined;
 
         const KC = Phaser.Input.Keyboard.KeyCodes;
         const keys1 = this.input.keyboard.addKeys({
