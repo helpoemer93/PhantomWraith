@@ -3057,6 +3057,7 @@ class GameScene extends Phaser.Scene {
     }
 
     performEnteiCharge(e, time) {
+        AudioSettings.playSfx(this, 'entei-charge', { volume: 0.4 });
         const startX = e.x;
         const startY = e.y;
         const endX = e.aimEndX;
@@ -3122,6 +3123,7 @@ class GameScene extends Phaser.Scene {
     fireFlamethrower(e, time) {
         const spec = e.spec.flamethrower;
         if (!spec) return;
+        AudioSettings.playSfx(this, 'entei-flame', { volume: 0.4 });
         // 매 화방마다 새로 조준
         let p = null;
         if (this.player1 && !this.player1.isInvincible) p = this.player1;
@@ -3315,6 +3317,7 @@ class GameScene extends Phaser.Scene {
     }
 
     performRaikouCharge(r, time) {
+        AudioSettings.playSfx(this, 'raikou-charge', { volume: 0.4 });
         const startX = r.x;
         const startY = r.y;
         const endX = r.aimEndX;
@@ -3402,11 +3405,30 @@ class GameScene extends Phaser.Scene {
         const cx = this.boss.sprite.x;
         const cy = this.boss.sprite.y;
         const a = spec.a ?? 100;
+        const coef = spec.waveCoef ?? 2;
+        const period = spec.periodSec ?? 1.0;
+        // 파도 SFX: 발사 즉시 1회 + periodSec 간격으로 수명 동안 반복
+        AudioSettings.playSfx(this, 'suicune-wave', { volume: 0.4 });
+        const periodMs = period * 1000;
+        const repeats = Math.max(0, Math.floor((spec.lifespanMs ?? 8000) / periodMs) - 1);
+        if (repeats > 0) {
+            this.time.addEvent({
+                delay: periodMs, repeat: repeats - 1,
+                callback: () => AudioSettings.playSfx(this, 'suicune-wave', { volume: 0.4 }),
+            });
+        }
+        // phase offset: 명시 값 우선, startFromZero면 자동 계산 (sin(2π·phase/period) = -1/coef).
+        let phaseOffsetSec = spec.phaseOffsetSec ?? 0;
+        if (spec.startFromZero && coef > 0) {
+            const s = Math.max(-1, Math.min(1, -1 / coef));
+            phaseOffsetSec = Math.asin(s) / (2 * Math.PI) * period;
+        }
+        const initV = a * (1 + coef * Math.sin((2 * Math.PI * phaseOffsetSec) / period));
         for (let i = 0; i < N; i += 1) {
             const angle = (i / N) * Math.PI * 2;
             const dx = Math.cos(angle);
             const dy = Math.sin(angle);
-            const bullet = this.spawnColoredCircleBullet(cx, cy, dx * a, dy * a, spec.radius ?? 6, spec.color ?? 0x66ccff);
+            const bullet = this.spawnColoredCircleBullet(cx, cy, dx * initV, dy * initV, spec.radius ?? 6, spec.color ?? 0x66ccff);
             if (!bullet) continue;
             if (spec.strokeColor !== undefined && bullet.setStrokeStyle) {
                 bullet.setStrokeStyle(1, spec.strokeColor);
@@ -3415,8 +3437,9 @@ class GameScene extends Phaser.Scene {
             bullet.waveDx = dx;
             bullet.waveDy = dy;
             bullet.waveA = a;
-            bullet.waveCoef = spec.waveCoef ?? 2;
-            bullet.wavePeriodSec = spec.periodSec ?? 1.0;
+            bullet.waveCoef = coef;
+            bullet.wavePeriodSec = period;
+            bullet.wavePhaseOffsetSec = phaseOffsetSec;
             bullet.waveStartTime = time;
             bullet.waveExpireAt = time + (spec.lifespanMs ?? 8000);
             bullet.damage = spec.damage ?? 1;
@@ -3429,7 +3452,8 @@ class GameScene extends Phaser.Scene {
             if (time > b.waveExpireAt) { b.destroy(); return; }
             const period = b.wavePeriodSec || 1.0;
             const coef = b.waveCoef ?? 2;
-            const tSec = (time - b.waveStartTime) / 1000;
+            const phaseOffset = b.wavePhaseOffsetSec ?? 0;
+            const tSec = (time - b.waveStartTime) / 1000 + phaseOffset;
             const v = b.waveA * (1 + coef * Math.sin((2 * Math.PI * tSec) / period));
             b.body.setVelocity(b.waveDx * v, b.waveDy * v);
         });
@@ -3673,6 +3697,7 @@ class GameScene extends Phaser.Scene {
 
     // 스이쿤 돌진: 조준 지점으로 순간이동 + 잔상 + 라인-원 판정. 소사이클·그랜드 공용.
     performSuicuneCharge(time, endX, endY, spec) {
+        AudioSettings.playSfx(this, 'suicune-charge', { volume: 0.4 });
         const b = this.boss.sprite;
         const startX = b.x;
         const startY = b.y;
@@ -3732,6 +3757,7 @@ class GameScene extends Phaser.Scene {
     }
 
     fireSuicuneWaterCannon(shot, spec, time) {
+        AudioSettings.playSfx(this, 'suicune-water', { volume: 0.4 });
         const wc = spec.waterCannon ?? {};
         const halfW = (wc.beamWidth ?? 24) / 2;
         for (const player of [this.player1, this.player2]) {

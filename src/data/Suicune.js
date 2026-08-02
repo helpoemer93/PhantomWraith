@@ -45,6 +45,7 @@ const SuicuneData = {
                     color: 0x66ccff,
                     strokeColor: 0x2266aa,
                     a: 100,                       // v = a + 2a·sin(2π·t)
+                    startFromZero: true,          // 초기속도 0에서 시작 (sin phase 자동 계산)
                     periodSec: 1.0,               // sin 주기 (t 초 단위, 2π·t/periodSec)
                     lifespanMs: 8000,             // 최대 수명 (안전장치)
                     damage: 1,
@@ -91,6 +92,7 @@ const SuicuneData = {
                     color: 0x66ccff,
                     strokeColor: 0x2266aa,
                     a: 100,
+                    startFromZero: true,
                     periodSec: 1.0,
                     lifespanMs: 8000,
                     damage: 1,
@@ -155,6 +157,7 @@ const SuicuneData = {
                         color: 0x66ccff,
                         strokeColor: 0x2266aa,
                         a: 100,
+                        startFromZero: true,
                         periodSec: 1.0,
                         lifespanMs: 8000,
                         damage: 1,
@@ -199,6 +202,7 @@ const SuicuneData = {
                         color: 0x66ccff,
                         strokeColor: 0x2266aa,
                         a: 100,
+                        startFromZero: true,
                         periodSec: 1.0,
                         lifespanMs: 8000,
                         damage: 1,
@@ -221,6 +225,7 @@ const SuicuneData = {
                         color: 0x66ccff,
                         strokeColor: 0x2266aa,
                         a: 100,
+                        startFromZero: true,
                         periodSec: 1.0,
                         lifespanMs: 8000,
                         damage: 1,
