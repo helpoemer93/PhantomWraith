@@ -4,6 +4,7 @@ class GameScene extends Phaser.Scene {
     }
 
     create() {
+        this.cameras.main.fadeIn(300, 0, 0, 0);
         const upgrades = this.registry.get('upgrades') || {};
         this.maxLives = Upgrades.maxLives.applied(upgrades.maxLives ?? 0);
         this.lives = this.maxLives;
@@ -199,11 +200,24 @@ class GameScene extends Phaser.Scene {
             GameConfig.GAME_WIDTH - 40, 8,
             0x333344
         );
+        // HP바 잔여 표시 (파이팅 게임 스타일): 실제 바 뒤에서 서서히 따라 축소.
+        this.uiHpBarLoss = this.add.rectangle(
+            20, 40,
+            GameConfig.GAME_WIDTH - 40, 8,
+            0xffffff
+        ).setOrigin(0, 0.5).setAlpha(0.5);
         this.uiHpBar = this.add.rectangle(
             20, 40,
             GameConfig.GAME_WIDTH - 40, 8,
             0xff6688
         ).setOrigin(0, 0.5);
+
+        // 플레이어 피격 시 붉은 화면 플래시 (최상단 depth).
+        this.damageFlash = this.add.rectangle(
+            GameConfig.GAME_WIDTH / 2, GameConfig.GAME_HEIGHT / 2,
+            GameConfig.GAME_WIDTH, GameConfig.GAME_HEIGHT,
+            0xff0000,
+        ).setDepth(1000).setAlpha(0);
 
         this.uiMessage = this.add.text(
             GameConfig.GAME_WIDTH / 2, GameConfig.GAME_HEIGHT / 2, '',
@@ -546,6 +560,7 @@ class GameScene extends Phaser.Scene {
         });
 
         this.updateHpBar();
+        this.followHpBarLoss(delta);
 
         if (this.boss.isDead() && !this.cleared) {
             this.onBossDefeated();
@@ -1451,7 +1466,7 @@ class GameScene extends Phaser.Scene {
         this.updateUI();
         if (this.lives <= 0) {
             this.gameOver = true;
-            this.uiMessage.setText('GAME OVER\nEnter: 다시 도전 / ESC: 메뉴');
+            this.showGameOverMessage();
         }
     }
 
@@ -1465,7 +1480,7 @@ class GameScene extends Phaser.Scene {
         this.updateUI();
         if (this.lives <= 0) {
             this.gameOver = true;
-            this.uiMessage.setText('GAME OVER\nEnter: 다시 도전 / ESC: 메뉴');
+            this.showGameOverMessage();
         }
     }
 
@@ -1536,7 +1551,7 @@ class GameScene extends Phaser.Scene {
         this.updateUI();
         if (this.lives <= 0) {
             this.gameOver = true;
-            this.uiMessage.setText('GAME OVER\nEnter: 다시 도전 / ESC: 메뉴');
+            this.showGameOverMessage();
         }
     }
 
@@ -1589,18 +1604,70 @@ class GameScene extends Phaser.Scene {
             ? `${wpnName} Lv${newWpnLv} 해금!`
             : `${wpnName} 이미 Lv${prevWpnLv}`;
         const line2 = `결정 +${crystalReward} (총 ${newCrystals})`;
-        this.uiMessage.setText(`클리어!\n${line1}\n${line2}`);
+        this.typeText(this.uiMessage, `클리어!\n${line1}\n${line2}`);
         this.clearAdvanceAt = this.time.now + 3000;
     }
 
     updateUI() {
+        if (this.prevLives !== undefined && this.lives < this.prevLives) {
+            this.playDamageFeedback();
+        }
+        this.prevLives = this.lives;
         this.uiLives.setText(`목숨: ${this.lives}/${this.maxLives}`);
+    }
+
+    playDamageFeedback() {
+        this.cameras.main.shake(150, 0.008);
+        if (this.damageFlash) {
+            this.tweens.killTweensOf(this.damageFlash);
+            this.damageFlash.setAlpha(0.3);
+            this.tweens.add({
+                targets: this.damageFlash, alpha: 0, duration: 250,
+            });
+        }
+    }
+
+    typeText(textObj, fullText, msPerChar = 40) {
+        if (textObj.__typeEvent) textObj.__typeEvent.remove();
+        textObj.setText('');
+        let idx = 0;
+        textObj.__typeEvent = this.time.addEvent({
+            delay: msPerChar, loop: true,
+            callback: () => {
+                idx += 1;
+                textObj.setText(fullText.substring(0, idx));
+                if (idx >= fullText.length) {
+                    textObj.__typeEvent.remove();
+                    textObj.__typeEvent = null;
+                }
+            },
+        });
+    }
+
+    showGameOverMessage() {
+        if (this.__gameOverMessageShown) return;
+        this.__gameOverMessageShown = true;
+        this.typeText(this.uiMessage, 'GAME OVER\nEnter: 다시 도전 / ESC: 메뉴');
     }
 
     updateHpBar() {
         const ratio = this.boss.hp / this.boss.maxHp;
         const fullWidth = GameConfig.GAME_WIDTH - 40;
         this.uiHpBar.width = Math.max(0, fullWidth * ratio);
+    }
+
+    followHpBarLoss(delta) {
+        if (!this.uiHpBar || !this.uiHpBarLoss) return;
+        const target = this.uiHpBar.width;
+        const current = this.uiHpBarLoss.width;
+        const fullWidth = GameConfig.GAME_WIDTH - 40;
+        // 초당 fullWidth의 5% 축소 (예: 폭 400 → 20px/s, 완전 사라지는 데 약 20초)
+        const rate = fullWidth * 0.05;
+        if (current > target) {
+            this.uiHpBarLoss.width = Math.max(target, current - (delta / 1000) * rate);
+        } else if (current < target) {
+            this.uiHpBarLoss.width = target;
+        }
     }
 
     fireGearBurst(boss, cfg) {
@@ -2123,7 +2190,7 @@ class GameScene extends Phaser.Scene {
         this.updateUI();
         if (this.lives <= 0) {
             this.gameOver = true;
-            this.uiMessage.setText('GAME OVER\nEnter: 다시 도전 / ESC: 메뉴');
+            this.showGameOverMessage();
         }
     }
 
@@ -2327,7 +2394,7 @@ class GameScene extends Phaser.Scene {
         this.updateUI();
         if (this.lives <= 0) {
             this.gameOver = true;
-            this.uiMessage.setText('GAME OVER\nEnter: 다시 도전 / ESC: 메뉴');
+            this.showGameOverMessage();
         }
     }
 
@@ -2470,7 +2537,7 @@ class GameScene extends Phaser.Scene {
                 this.updateUI();
                 if (this.lives <= 0) {
                     this.gameOver = true;
-                    this.uiMessage.setText('GAME OVER\nEnter: 다시 도전 / ESC: 메뉴');
+                    this.showGameOverMessage();
                 }
             }
         }
@@ -3009,7 +3076,7 @@ class GameScene extends Phaser.Scene {
                 this.updateUI();
                 if (this.lives <= 0) {
                     this.gameOver = true;
-                    this.uiMessage.setText('GAME OVER\nEnter: 다시 도전 / ESC: 메뉴');
+                    this.showGameOverMessage();
                 }
             }
         }
@@ -3134,7 +3201,7 @@ class GameScene extends Phaser.Scene {
         this.updateUI();
         if (this.lives <= 0) {
             this.gameOver = true;
-            this.uiMessage.setText('GAME OVER\nEnter: 다시 도전 / ESC: 메뉴');
+            this.showGameOverMessage();
         }
     }
 
@@ -3269,7 +3336,7 @@ class GameScene extends Phaser.Scene {
                 this.updateUI();
                 if (this.lives <= 0) {
                     this.gameOver = true;
-                    this.uiMessage.setText('GAME OVER\nEnter: 다시 도전 / ESC: 메뉴');
+                    this.showGameOverMessage();
                 }
             }
         }
@@ -3624,7 +3691,7 @@ class GameScene extends Phaser.Scene {
                 this.updateUI();
                 if (this.lives <= 0) {
                     this.gameOver = true;
-                    this.uiMessage.setText('GAME OVER\nEnter: 다시 도전 / ESC: 메뉴');
+                    this.showGameOverMessage();
                 }
             }
         }
@@ -3681,7 +3748,7 @@ class GameScene extends Phaser.Scene {
                 this.updateUI();
                 if (this.lives <= 0) {
                     this.gameOver = true;
-                    this.uiMessage.setText('GAME OVER\nEnter: 다시 도전 / ESC: 메뉴');
+                    this.showGameOverMessage();
                 }
             }
         }

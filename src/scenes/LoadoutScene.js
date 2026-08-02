@@ -5,6 +5,7 @@ class LoadoutScene extends Phaser.Scene {
 
     create() {
         this.cameras.main.setBackgroundColor('#1a1a3a');
+        this.cameras.main.fadeIn(300, 0, 0, 0);
         this.centerX = GameConfig.GAME_WIDTH / 2;
 
         this.weaponLevels = this.registry.get('weaponLevels') || {};

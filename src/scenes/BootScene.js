@@ -60,6 +60,7 @@ class BootScene extends Phaser.Scene {
 
     create() {
         this.cameras.main.setBackgroundColor('#1a1a2e');
+        this.cameras.main.fadeIn(300, 0, 0, 0);
         AudioSettings.applyMaster(this);
         BootScene.ensureMenuBgm(this);
 
@@ -234,6 +235,14 @@ class BootScene extends Phaser.Scene {
             const selected = i === this.selectedIndex;
             t.setText(selected ? `▶  ${item.label}` : `    ${item.label}`);
             t.setColor(selected ? '#ffee00' : (item.color ?? '#aaaaaa'));
+            if (t.__pulseTween) { t.__pulseTween.stop(); t.__pulseTween = null; }
+            t.setScale(1);
+            if (selected) {
+                t.__pulseTween = this.tweens.add({
+                    targets: t, scale: 1.08, duration: 500,
+                    yoyo: true, repeat: -1, ease: 'Sine.easeInOut',
+                });
+            }
         });
     }
 

@@ -5,6 +5,7 @@ class SettingsScene extends Phaser.Scene {
 
     create() {
         this.cameras.main.setBackgroundColor('#1a1a2e');
+        this.cameras.main.fadeIn(300, 0, 0, 0);
         AudioSettings.applyMaster(this);
 
         const centerX = GameConfig.GAME_WIDTH / 2;
@@ -27,7 +28,6 @@ class SettingsScene extends Phaser.Scene {
         this.itemTexts = this.items.map((item, i) => (
             this.add.text(centerX, 240 + i * 60, '', {
                 fontSize: '20px', color: '#ffffff', align: 'center',
-                fontFamily: 'monospace',
             }).setOrigin(0.5)
         ));
 
@@ -101,6 +101,14 @@ class SettingsScene extends Phaser.Scene {
             const label = item.label.padEnd(6, ' ');
             t.setText(`${prefix}${label} ${bar} ${String(pct).padStart(3, ' ')}%`);
             t.setColor(selected ? '#ffee00' : '#aaaaaa');
+            if (t.__pulseTween) { t.__pulseTween.stop(); t.__pulseTween = null; }
+            t.setScale(1);
+            if (selected) {
+                t.__pulseTween = this.tweens.add({
+                    targets: t, scale: 1.05, duration: 500,
+                    yoyo: true, repeat: -1, ease: 'Sine.easeInOut',
+                });
+            }
         });
     }
 }

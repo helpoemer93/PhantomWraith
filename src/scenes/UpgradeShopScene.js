@@ -5,6 +5,7 @@ class UpgradeShopScene extends Phaser.Scene {
 
     create() {
         this.cameras.main.setBackgroundColor('#1a2432');
+        this.cameras.main.fadeIn(300, 0, 0, 0);
         this.centerX = GameConfig.GAME_WIDTH / 2;
         this.upgrades = { ...(this.registry.get('upgrades') || makeInitialUpgrades()) };
         this.crystals = this.registry.get('crystals') ?? 0;

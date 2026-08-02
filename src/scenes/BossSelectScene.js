@@ -5,6 +5,7 @@ class BossSelectScene extends Phaser.Scene {
 
     create() {
         this.cameras.main.setBackgroundColor('#1a1a2e');
+        this.cameras.main.fadeIn(300, 0, 0, 0);
         this.centerX = GameConfig.GAME_WIDTH / 2;
         this.bossProgress = this.registry.get('bossProgress') || {};
 

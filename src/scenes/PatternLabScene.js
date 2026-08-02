@@ -20,6 +20,7 @@ class PatternLabScene extends Phaser.Scene {
 
     create() {
         this.cameras.main.setBackgroundColor('#1a1a2e');
+        this.cameras.main.fadeIn(300, 0, 0, 0);
 
         this.physics.world.setBounds(0, 0, LAB_PLAY_W, LAB_H);
 
