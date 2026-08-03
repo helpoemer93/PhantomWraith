@@ -33,6 +33,10 @@ class PatternLabScene extends Phaser.Scene {
         this.bossBullets = this.physics.add.group();
         this.snowflakesGroup = this.physics.add.group();
         this.orbitOrbs = this.physics.add.group();
+        this.applyBossBulletStyling(this.bossBullets);
+        this.applyBossBulletStyling(this.snowflakesGroup);
+        this.applyPlayerBulletStyling(this.playerBullets);
+        this.applyPlayerBulletStyling(this.orbitOrbs);
         this.turretsGroup = this.physics.add.group();
         this.turretSpawnerSpec = null;
         this.turretSpawnLastTime = 0;
@@ -41,6 +45,10 @@ class PatternLabScene extends Phaser.Scene {
         this.suicideDroneSpawnLastTime = null;
         this.harvesterDronesGroup = this.physics.add.group();
         this.harvesterDroneSpawnerSpec = null;
+        this.doopaCores = [];
+        this.ceilingOrbs = [];
+        this.ceilingSpec = null;
+        this.ceilingCharge = null;
         this.turretConnectionsSpec = null;
         this.turretConnectionsGraphics = null;
         this.turretMotionSpec = null;
@@ -569,7 +577,7 @@ class PatternLabScene extends Phaser.Scene {
         const time = this.time.now;
         if (!player.canBeHit(time)) return;
         player.onHit(time);
-        if (!bullet.isBlade && !bullet.isOrbCarrier && !bullet.isGear && !bullet.isElectricField) {
+        if (!bullet.isBlade && !bullet.isOrbCarrier && !bullet.isGear && !bullet.isElectricField && !bullet.isCeilingOrb) {
             bullet.destroy();
         }
         this.hitCount += 1;
@@ -633,6 +641,8 @@ class PatternLabScene extends Phaser.Scene {
         this.updateBladeMissiles(time);
         this.updateDeceleratingBullets(delta);
         this.updateOrbCarriers(time, delta);
+        this.updateDoopaOrbs(time, delta);
+        this.updateCeilingOrbits(time, delta);
         this.updateSeekingMissiles(delta);
         this.updateEndpointDecelSpiral();
         this.updateTurretSpawner(time);
@@ -787,6 +797,226 @@ class PatternLabScene extends Phaser.Scene {
         b.body.setCircle(radius);
         b.body.setVelocity(vx, vy);
         return b;
+    }
+
+    // 두파팡 페이즈1 천장 궤도 (Lab 미러링). Lab은 lives/gameOver 없이 hitCount 증가.
+    startCeilingOrbits(spec) {
+        this.destroyCeilingOrbits();
+        this.ceilingSpec = spec;
+        this.ceilingOrbs = [];
+        this.ceilingCharge = { lastChargeTime: null };
+        for (let i = 0; i < spec.count; i += 1) {
+            const phaseAngle = (i / spec.count) * Math.PI * 2;
+            const px = spec.cx + spec.a * Math.cos(phaseAngle);
+            const py = spec.cy + spec.b * Math.sin(phaseAngle);
+            const orb = this.add.circle(px, py, spec.orbSize, spec.color);
+            this.physics.add.existing(orb);
+            orb.body.setCircle(spec.orbSize);
+            this.bossBullets.add(orb);
+            orb.state = 'orbiting';
+            orb.phaseAngle = phaseAngle;
+            orb.isCeilingOrb = true;
+            this.ceilingOrbs.push(orb);
+        }
+    }
+
+    updateCeilingOrbits(time, delta) {
+        if (!this.ceilingSpec || this.ceilingOrbs.length === 0) return;
+        const spec = this.ceilingSpec;
+        const dt = delta / 1000;
+        this.ceilingOrbs = this.ceilingOrbs.filter((o) => o && o.active);
+
+        for (const orb of this.ceilingOrbs) {
+            if (orb.state === 'orbiting') {
+                orb.phaseAngle += spec.rotationSpeedRadPerSec * dt;
+                orb.x = spec.cx + spec.a * Math.cos(orb.phaseAngle);
+                orb.y = spec.cy + spec.b * Math.sin(orb.phaseAngle);
+            } else if (orb.state === 'preCharging') {
+                if (time >= orb.warningEndTime) this.performCeilingCharge(orb, time, spec);
+            } else if (orb.state === 'charging') {
+                if (time >= orb.chargeEndTime) {
+                    orb.state = 'returning';
+                    if (orb.body) orb.body.enable = true;
+                }
+            } else if (orb.state === 'returning') {
+                orb.y -= spec.returnSpeedPxPerSec * dt;
+                if (orb.y <= orb.chargeStartY) {
+                    orb.y = orb.chargeStartY;
+                    orb.x = orb.chargeStartX;
+                    orb.state = 'orbiting';
+                }
+            }
+        }
+
+        if (this.ceilingCharge.lastChargeTime == null) {
+            this.ceilingCharge.lastChargeTime = time;
+        }
+        if (time - this.ceilingCharge.lastChargeTime >= spec.chargeIntervalMs) {
+            const chosen = this.pickCeilingChargePair(spec);
+            if (chosen) {
+                for (const orb of chosen) this.triggerCeilingWarning(orb, time, spec);
+                this.ceilingCharge.lastChargeTime = time;
+            }
+        }
+    }
+
+    pickCeilingChargePair(spec) {
+        const candidates = this.ceilingOrbs.filter((o) => o.state === 'orbiting');
+        const minGap = spec.chargeMinXGap ?? 0;
+        const validPairs = [];
+        for (let i = 0; i < candidates.length; i += 1) {
+            for (let j = i + 1; j < candidates.length; j += 1) {
+                if (Math.abs(candidates[i].x - candidates[j].x) >= minGap) {
+                    validPairs.push([candidates[i], candidates[j]]);
+                }
+            }
+        }
+        if (validPairs.length === 0) return null;
+        return validPairs[Math.floor(Math.random() * validPairs.length)];
+    }
+
+    triggerCeilingWarning(orb, time, spec) {
+        orb.state = 'preCharging';
+        orb.chargeStartX = orb.x;
+        orb.chargeStartY = orb.y;
+        orb.warningEndTime = time + spec.warningMs;
+        const rectYCenter = (orb.y + spec.floorY) / 2;
+        const rectH = spec.floorY - orb.y;
+        const rectW = spec.orbSize * 2;
+        orb.warningRect = this.add.rectangle(
+            orb.x, rectYCenter, rectW, rectH,
+            spec.warningColor ?? 0xff3333,
+        ).setAlpha(spec.warningAlpha ?? 0.35).setDepth(20);
+    }
+
+    performCeilingCharge(orb, time, spec) {
+        if (orb.warningRect) { orb.warningRect.destroy(); orb.warningRect = null; }
+        orb.x = orb.chargeStartX;
+        orb.y = spec.floorY;
+        orb.state = 'charging';
+        orb.chargeEndTime = time + spec.chargeStayMs;
+        if (orb.body) orb.body.enable = false;
+        const halfW = spec.orbSize;
+        for (const player of [this.player1, this.player2]) {
+            if (!player || !player.sprite || !player.sprite.active) continue;
+            if (!player.canBeHit(time)) continue;
+            const dist = this.pointToSegmentDistance(
+                player.sprite.x, player.sprite.y,
+                orb.chargeStartX, orb.chargeStartY,
+                orb.chargeStartX, spec.floorY,
+            );
+            if (dist <= halfW + player.size / 2) {
+                player.onHit(time);
+                this.hitCount = (this.hitCount ?? 0) + 1;
+                if (this.updateModeUI) this.updateModeUI();
+            }
+        }
+        const N = spec.afterimageCount ?? 5;
+        const fadeMs = spec.afterimageFadeMs ?? 300;
+        const startY = orb.chargeStartY;
+        const endY = spec.floorY;
+        for (let i = 1; i <= N; i += 1) {
+            const t = i / (N + 1);
+            const ay = startY + (endY - startY) * t;
+            const g = this.add.circle(orb.chargeStartX, ay, spec.orbSize, spec.color);
+            g.setDepth(20).setAlpha(0.5);
+            this.raikouAfterimages.push({ sprite: g, expireAt: time + fadeMs, fadeMs });
+        }
+    }
+
+    destroyCeilingOrbits() {
+        if (this.ceilingOrbs) {
+            for (const o of this.ceilingOrbs) {
+                if (o && o.warningRect) o.warningRect.destroy();
+                if (o && o.active) o.destroy();
+            }
+        }
+        this.ceilingOrbs = [];
+        this.ceilingSpec = null;
+        this.ceilingCharge = null;
+    }
+
+    spawnDoopaOrb(originX, originY, spec) {
+        const target = this.getActivePlayerPos();
+        const dx = target.x - originX;
+        const dy = target.y - originY;
+        const dist = Math.hypot(dx, dy);
+        if (dist < 1) return null;
+        const coreSpeed = spec.core?.speed ?? 200;
+        const transitionMs = spec.core?.transitionMs ?? 300;
+        const orbCount = spec.orbit?.count ?? 3;
+        const orbRadius = spec.orbit?.radius ?? 6;
+        const orbColor = spec.orbit?.color ?? 0x88ff88;
+        const orbitRad = spec.orbit?.orbitRadius ?? 30;
+        const orbitSpd = spec.orbit?.orbitSpeedRadPerSec ?? 3;
+
+        const time = this.time.now;
+        const core = {
+            x: originX, y: originY,
+            vx: (dx / dist) * coreSpeed,
+            vy: (dy / dist) * coreSpeed,
+            spawnTime: time,
+            transitionEndTime: time + transitionMs,
+            transitionMs,
+            orbitRad, orbitSpd,
+            orbs: [],
+        };
+        for (let i = 0; i < orbCount; i += 1) {
+            const phaseAngle = (i / orbCount) * Math.PI * 2;
+            const orb = this.add.circle(originX, originY, orbRadius, orbColor);
+            this.physics.add.existing(orb);
+            this.bossBullets.add(orb);
+            orb.body.setCircle(orbRadius);
+            orb.doopaCore = core;
+            orb.phaseAngle = phaseAngle;
+            core.orbs.push(orb);
+        }
+        this.doopaCores.push(core);
+        return null;
+    }
+
+    updateDoopaOrbs(time, delta) {
+        if (!this.doopaCores || this.doopaCores.length === 0) return;
+        const dt = delta / 1000;
+        const remaining = [];
+        const margin = 300;
+        for (const core of this.doopaCores) {
+            const inTransition = time < core.transitionEndTime;
+            if (!inTransition) {
+                core.x += core.vx * dt;
+                core.y += core.vy * dt;
+            }
+            for (const orb of core.orbs) {
+                if (!orb.active) continue;
+                if (inTransition) {
+                    const t = (time - core.spawnTime) / core.transitionMs;
+                    const tx = core.x + Math.cos(orb.phaseAngle) * core.orbitRad;
+                    const ty = core.y + Math.sin(orb.phaseAngle) * core.orbitRad;
+                    orb.x = core.x + (tx - core.x) * t;
+                    orb.y = core.y + (ty - core.y) * t;
+                    const trX = (tx - core.x) / (core.transitionMs / 1000);
+                    const trY = (ty - core.y) / (core.transitionMs / 1000);
+                    orb.body.setVelocity(trX, trY);
+                } else {
+                    orb.phaseAngle += core.orbitSpd * dt;
+                    orb.x = core.x + Math.cos(orb.phaseAngle) * core.orbitRad;
+                    orb.y = core.y + Math.sin(orb.phaseAngle) * core.orbitRad;
+                    const tangSpd = core.orbitSpd * core.orbitRad;
+                    const tangVx = -Math.sin(orb.phaseAngle) * tangSpd;
+                    const tangVy = Math.cos(orb.phaseAngle) * tangSpd;
+                    orb.body.setVelocity(core.vx + tangVx, core.vy + tangVy);
+                }
+            }
+            const off = core.x < -margin || core.x > GameConfig.GAME_WIDTH + margin
+                || core.y < -margin || core.y > GameConfig.GAME_HEIGHT + margin;
+            const allDead = core.orbs.every((o) => !o.active);
+            if (off || allDead) {
+                for (const orb of core.orbs) if (orb.active) orb.destroy();
+                continue;
+            }
+            remaining.push(core);
+        }
+        this.doopaCores = remaining;
     }
 
     spawnOrbCarrier(originX, originY, angleDeg, spec) {
@@ -1256,6 +1486,24 @@ class PatternLabScene extends Phaser.Scene {
         s.body.setCircle(radius);
         s.body.setVelocity(vx, vy);
         return s;
+    }
+
+    applyBossBulletStyling(group) {
+        const origAdd = group.add.bind(group);
+        group.add = (child, addToScene) => {
+            if (child && child.setStrokeStyle && !child.isStroked) {
+                child.setStrokeStyle(2, 0xff4444, 1);
+            }
+            return origAdd(child, addToScene);
+        };
+    }
+
+    applyPlayerBulletStyling(group) {
+        const origAdd = group.add.bind(group);
+        group.add = (child, addToScene) => {
+            if (child && child.setAlpha) child.setAlpha(0.6);
+            return origAdd(child, addToScene);
+        };
     }
 
     spawnBossBullet(x, y, vx, vy) {
@@ -2538,6 +2786,7 @@ class PatternLabScene extends Phaser.Scene {
     onRaikouOrbitHitLab(raikou, orb) {
         if (!this.boss || this.boss.isDead()) return;
         const time = this.time.now;
+        orb.lastContactTime = time;
         if (time - orb.lastHitTargetTime < orb.weaponSpec.contactCooldownMs) return;
         orb.lastHitTargetTime = time;
         this.boss.onHit(orb.weaponSpec.damage);

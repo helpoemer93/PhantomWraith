@@ -9,7 +9,7 @@ const Weapons = {
         damage: 1,
         bulletSpeed: 520,
         pierce: false,
-        color: 0xffee88,
+        color: 0xaaffff,
         width: 6,
         height: 14,
     },
@@ -22,7 +22,7 @@ const Weapons = {
         bulletSpeed: 500,
         pierce: true,
         contactCooldownMs: 100,
-        color: 0x88ffff,
+        color: 0x66ccff,
         width: 10,
         height: 22,
     },
@@ -36,7 +36,7 @@ const Weapons = {
         pierce: false,
         pellets: 3,
         angleSpreadDeg: 10,
-        color: 0xff88ff,
+        color: 0xbbffdd,
         width: 6,
         height: 12,
     },
@@ -50,7 +50,7 @@ const Weapons = {
         turnRateDegPerSec: 180,
         accel: 100,
         pierce: false,
-        color: 0xffaa66,
+        color: 0xccddff,
         radius: 5,
     },
     orbit: {
@@ -59,11 +59,18 @@ const Weapons = {
         type: 'orbit',
         radius: 99,
         rotationSpeedRadPerSec: Math.PI * 2,
-        damage: 2,
-        contactCooldownMs: 220,
+        rotationSlowMultiplier: 0.1,
+        rotationSlowDurationMs: 100,
+        damage: 1,
+        contactCooldownMs: 500,
         orbCount: 1,
-        color: 0x88ff88,
-        orbSize: 10,
+        color: 0xccff66,
+        orbSize: 15,
+        // 저점보장용 자동 미사일. 궤도체마다 가장 가까운 적으로 발사.
+        missileDamage: 3,
+        missileIntervalMs: 500,
+        missileSpeed: 380,
+        missileSize: 6,
     },
 };
 
@@ -119,6 +126,7 @@ function getWeapon(id, level) {
     } else if (id === 'orbit') {
         w.orbCount = base.orbCount + Math.floor(lv / 2);
         w.damage = base.damage * Math.pow(1.075, lv);
+        w.missileDamage = base.missileDamage * Math.pow(1.075, lv);
     }
     w.name = `${base.name} Lv${lv}`;
     w.color = brightenColorForLevel(base.color, lv);

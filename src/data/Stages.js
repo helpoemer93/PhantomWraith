@@ -3,4 +3,5 @@ const Stages = [
     Freezer,
     Metagross,
     Suicune,
+    Doopapang,
 ];

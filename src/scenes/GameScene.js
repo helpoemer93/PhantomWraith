@@ -29,6 +29,12 @@ class GameScene extends Phaser.Scene {
         this.bossBullets = this.physics.add.group();
         this.orbitOrbs = this.physics.add.group();
         this.snowflakesGroup = this.physics.add.group();
+        // 보스 총알 통일 스타일 — 그룹 add를 hook해서 stroke 없는 Shape에만 흰 아웃라인 부여.
+        // (예: gear·snowflake는 이미 자체 stroke 있어 isStroked=true → 건너뜀)
+        this.applyBossBulletStyling(this.bossBullets);
+        this.applyBossBulletStyling(this.snowflakesGroup);
+        this.applyPlayerBulletStyling(this.playerBullets);
+        this.applyPlayerBulletStyling(this.orbitOrbs);
         this.turretsGroup = this.physics.add.group();
         this.turretSpawnerSpec = null;
         this.turretSpawnLastTime = 0;
@@ -37,6 +43,12 @@ class GameScene extends Phaser.Scene {
         this.suicideDroneSpawnLastTime = null;
         this.harvesterDronesGroup = this.physics.add.group();
         this.harvesterDroneSpawnerSpec = null;
+        // 두파팡 궤도체 캐리어(가상 중심점 + 3구체).
+        this.doopaCores = [];
+        // 두파팡 페이즈1: 천장 타원 궤도 5구체 + 랜덤 2개 수직 돌진.
+        this.ceilingOrbs = [];
+        this.ceilingSpec = null;
+        this.ceilingCharge = null;
         // 스이쿤 페이즈 1 라이코 관련 상태 (라이코는 항상 1개체).
         this.raikou = null;
         this.raikouSpec = null;
@@ -521,6 +533,8 @@ class GameScene extends Phaser.Scene {
         this.updateBladeMissiles(time);
         this.updateDeceleratingBullets(delta);
         this.updateOrbCarriers(time, delta);
+        this.updateDoopaOrbs(time, delta);
+        this.updateCeilingOrbits(time, delta);
         this.updateHomingBullets(delta);
         this.updateSeekingMissiles(delta);
         this.updateEndpointDecelSpiral();
@@ -749,6 +763,74 @@ class GameScene extends Phaser.Scene {
         b.accel = w.accel ?? 0;
     }
 
+    // 궤도체 자동 미사일: 가장 가까운 적을 향해 직선 발사. 유도·관통 없음.
+    // 대상 없으면 false 반환 (Player가 다음 프레임 재시도).
+    spawnOrbitMissile(x, y, w) {
+        const target = this.getNearestEnemyTo(x, y);
+        if (!target) return false;
+        const dx = target.x - x;
+        const dy = target.y - y;
+        const dist = Math.hypot(dx, dy);
+        if (dist < 1) return false;
+        const speed = w.missileSpeed ?? 380;
+        const size = w.missileSize ?? 6;
+        const b = this.add.circle(x, y, size, w.color);
+        this.physics.add.existing(b);
+        b.body.setCircle(size);
+        this.playerBullets.add(b);
+        b.body.setVelocity((dx / dist) * speed, (dy / dist) * speed);
+        b.damage = w.missileDamage ?? 3;
+        b.pierce = false;
+        b.contactCooldownMs = 0;
+        b.lastHitTargetTime = -Infinity;
+        return true;
+    }
+
+    // 궤도체 미사일 대상 후보: 메인 보스, 라이코/엔테이, 각종 그룹 소속 적.
+    getNearestEnemyTo(x, y) {
+        let bestDist = Infinity;
+        let best = null;
+        const consider = (obj) => {
+            if (!obj || !obj.active) return;
+            const dx = obj.x - x;
+            const dy = obj.y - y;
+            const d2 = dx * dx + dy * dy;
+            if (d2 < bestDist) { bestDist = d2; best = obj; }
+        };
+        if (this.boss && this.boss.sprite) consider(this.boss.sprite);
+        if (this.raikou) consider(this.raikou);
+        if (this.entei) consider(this.entei);
+        const groups = [
+            this.turretsGroup, this.suicideDronesGroup, this.harvesterDronesGroup,
+        ];
+        for (const g of groups) {
+            if (!g) continue;
+            g.children.each((c) => consider(c));
+        }
+        return best ? { x: best.x, y: best.y } : null;
+    }
+
+    // 그룹의 add 메서드를 감싸서 stroke 없는 Shape에 붉은 아웃라인 적용.
+    // 플레이어 총알과 시각적 구분 위해 보스 총알만 붉은 stroke.
+    applyBossBulletStyling(group) {
+        const origAdd = group.add.bind(group);
+        group.add = (child, addToScene) => {
+            if (child && child.setStrokeStyle && !child.isStroked) {
+                child.setStrokeStyle(2, 0xff4444, 1);
+            }
+            return origAdd(child, addToScene);
+        };
+    }
+
+    // 플레이어 총알은 배경으로 녹아들도록 알파 감쇠.
+    applyPlayerBulletStyling(group) {
+        const origAdd = group.add.bind(group);
+        group.add = (child, addToScene) => {
+            if (child && child.setAlpha) child.setAlpha(0.6);
+            return origAdd(child, addToScene);
+        };
+    }
+
     spawnBossBullet(x, y, vx, vy) {
         const b = this.add.circle(
             x, y,
@@ -829,6 +911,245 @@ class GameScene extends Phaser.Scene {
             core.orbits.push(orb);
         }
         return core;
+    }
+
+    // 두파팡 궤도체 캐리어: 가상 중심점(비가시·무판정) + 3구체.
+    // 스폰 순간 3구체 모두 두파팡 위치에 있다가 궤도 반경으로 튀어나감 (transitionMs).
+    // 도착 후 중심점이 조준 방향 직선 이동, 구체는 공전하며 따라감.
+    spawnDoopaOrb(originX, originY, spec) {
+        const target = this.getActivePlayerPos();
+        const dx = target.x - originX;
+        const dy = target.y - originY;
+        const dist = Math.hypot(dx, dy);
+        if (dist < 1) return null;
+        const coreSpeed = spec.core?.speed ?? 200;
+        const transitionMs = spec.core?.transitionMs ?? 300;
+        const orbCount = spec.orbit?.count ?? 3;
+        const orbRadius = spec.orbit?.radius ?? 6;
+        const orbColor = spec.orbit?.color ?? 0x88ff88;
+        const orbitRad = spec.orbit?.orbitRadius ?? 30;
+        const orbitSpd = spec.orbit?.orbitSpeedRadPerSec ?? 3;
+
+        const time = this.time.now;
+        const core = {
+            x: originX, y: originY,
+            vx: (dx / dist) * coreSpeed,
+            vy: (dy / dist) * coreSpeed,
+            spawnTime: time,
+            transitionEndTime: time + transitionMs,
+            transitionMs,
+            orbitRad, orbitSpd,
+            orbs: [],
+        };
+        for (let i = 0; i < orbCount; i += 1) {
+            const phaseAngle = (i / orbCount) * Math.PI * 2;
+            const orb = this.add.circle(originX, originY, orbRadius, orbColor);
+            this.physics.add.existing(orb);
+            this.bossBullets.add(orb);
+            orb.body.setCircle(orbRadius);
+            orb.doopaCore = core;
+            orb.phaseAngle = phaseAngle;
+            core.orbs.push(orb);
+        }
+        this.doopaCores.push(core);
+        return null;
+    }
+
+    updateDoopaOrbs(time, delta) {
+        if (!this.doopaCores || this.doopaCores.length === 0) return;
+        const dt = delta / 1000;
+        const remaining = [];
+        const margin = 300;
+        for (const core of this.doopaCores) {
+            const inTransition = time < core.transitionEndTime;
+            if (!inTransition) {
+                core.x += core.vx * dt;
+                core.y += core.vy * dt;
+            }
+            for (const orb of core.orbs) {
+                if (!orb.active) continue;
+                if (inTransition) {
+                    // 스폰 시점 t=0 (중심에 겹침) → transitionMs 시점 t=1 (궤도 위치).
+                    const t = (time - core.spawnTime) / core.transitionMs;
+                    const tx = core.x + Math.cos(orb.phaseAngle) * core.orbitRad;
+                    const ty = core.y + Math.sin(orb.phaseAngle) * core.orbitRad;
+                    orb.x = core.x + (tx - core.x) * t;
+                    orb.y = core.y + (ty - core.y) * t;
+                    // 예측용 velocity (스폰→궤도 위치 방향).
+                    const trX = (tx - core.x) / (core.transitionMs / 1000);
+                    const trY = (ty - core.y) / (core.transitionMs / 1000);
+                    orb.body.setVelocity(trX, trY);
+                } else {
+                    orb.phaseAngle += core.orbitSpd * dt;
+                    orb.x = core.x + Math.cos(orb.phaseAngle) * core.orbitRad;
+                    orb.y = core.y + Math.sin(orb.phaseAngle) * core.orbitRad;
+                    const tangSpd = core.orbitSpd * core.orbitRad;
+                    const tangVx = -Math.sin(orb.phaseAngle) * tangSpd;
+                    const tangVy = Math.cos(orb.phaseAngle) * tangSpd;
+                    orb.body.setVelocity(core.vx + tangVx, core.vy + tangVy);
+                }
+            }
+            const off = core.x < -margin || core.x > GameConfig.GAME_WIDTH + margin
+                || core.y < -margin || core.y > GameConfig.GAME_HEIGHT + margin;
+            const allDead = core.orbs.every((o) => !o.active);
+            if (off || allDead) {
+                for (const orb of core.orbs) if (orb.active) orb.destroy();
+                continue;
+            }
+            remaining.push(core);
+        }
+        this.doopaCores = remaining;
+    }
+
+    // 두파팡 페이즈1: 천장 타원 궤도 5구체 + 2초마다 랜덤 2개 수직 돌진.
+    // 구체 상태: 'orbiting' → 'preCharging'(경고) → 'charging'(순간이동+잔상)
+    //          → 'returning'(위로 이동) → 'orbiting'.
+    startCeilingOrbits(spec) {
+        this.destroyCeilingOrbits();
+        this.ceilingSpec = spec;
+        this.ceilingOrbs = [];
+        // lastChargeTime은 첫 update에서 지연 초기화 (create() 시점 time.now는 0이라 즉발 방지).
+        this.ceilingCharge = { lastChargeTime: null };
+        for (let i = 0; i < spec.count; i += 1) {
+            const phaseAngle = (i / spec.count) * Math.PI * 2;
+            const px = spec.cx + spec.a * Math.cos(phaseAngle);
+            const py = spec.cy + spec.b * Math.sin(phaseAngle);
+            const orb = this.add.circle(px, py, spec.orbSize, spec.color);
+            this.physics.add.existing(orb);
+            orb.body.setCircle(spec.orbSize);
+            this.bossBullets.add(orb);
+            orb.state = 'orbiting';
+            orb.phaseAngle = phaseAngle;
+            orb.isCeilingOrb = true;
+            this.ceilingOrbs.push(orb);
+        }
+    }
+
+    updateCeilingOrbits(time, delta) {
+        if (!this.ceilingSpec || this.ceilingOrbs.length === 0) return;
+        const spec = this.ceilingSpec;
+        const dt = delta / 1000;
+        this.ceilingOrbs = this.ceilingOrbs.filter((o) => o && o.active);
+
+        for (const orb of this.ceilingOrbs) {
+            if (orb.state === 'orbiting') {
+                orb.phaseAngle += spec.rotationSpeedRadPerSec * dt;
+                orb.x = spec.cx + spec.a * Math.cos(orb.phaseAngle);
+                orb.y = spec.cy + spec.b * Math.sin(orb.phaseAngle);
+            } else if (orb.state === 'preCharging') {
+                if (time >= orb.warningEndTime) {
+                    this.performCeilingCharge(orb, time, spec);
+                }
+            } else if (orb.state === 'charging') {
+                if (time >= orb.chargeEndTime) {
+                    orb.state = 'returning';
+                    if (orb.body) orb.body.enable = true;
+                }
+            } else if (orb.state === 'returning') {
+                orb.y -= spec.returnSpeedPxPerSec * dt;
+                if (orb.y <= orb.chargeStartY) {
+                    orb.y = orb.chargeStartY;
+                    orb.x = orb.chargeStartX;
+                    orb.state = 'orbiting';
+                }
+            }
+        }
+
+        // 새 돌진 트리거. x축 거리 chargeMinXGap 이상인 쌍만 유효.
+        if (this.ceilingCharge.lastChargeTime == null) {
+            this.ceilingCharge.lastChargeTime = time;
+        }
+        if (time - this.ceilingCharge.lastChargeTime >= spec.chargeIntervalMs) {
+            const chosen = this.pickCeilingChargePair(spec);
+            if (chosen) {
+                for (const orb of chosen) this.triggerCeilingWarning(orb, time, spec);
+                this.ceilingCharge.lastChargeTime = time;
+            }
+            // 후보 쌍 부족 시 스킵 (다음 프레임 재시도).
+        }
+    }
+
+    pickCeilingChargePair(spec) {
+        const candidates = this.ceilingOrbs.filter((o) => o.state === 'orbiting');
+        const minGap = spec.chargeMinXGap ?? 0;
+        const validPairs = [];
+        for (let i = 0; i < candidates.length; i += 1) {
+            for (let j = i + 1; j < candidates.length; j += 1) {
+                if (Math.abs(candidates[i].x - candidates[j].x) >= minGap) {
+                    validPairs.push([candidates[i], candidates[j]]);
+                }
+            }
+        }
+        if (validPairs.length === 0) return null;
+        return validPairs[Math.floor(Math.random() * validPairs.length)];
+    }
+
+    triggerCeilingWarning(orb, time, spec) {
+        orb.state = 'preCharging';
+        orb.chargeStartX = orb.x;
+        orb.chargeStartY = orb.y;
+        orb.warningEndTime = time + spec.warningMs;
+        const rectYCenter = (orb.y + spec.floorY) / 2;
+        const rectH = spec.floorY - orb.y;
+        const rectW = spec.orbSize * 2;
+        orb.warningRect = this.add.rectangle(
+            orb.x, rectYCenter, rectW, rectH,
+            spec.warningColor ?? 0xff3333,
+        ).setAlpha(spec.warningAlpha ?? 0.35).setDepth(20);
+    }
+
+    performCeilingCharge(orb, time, spec) {
+        if (orb.warningRect) { orb.warningRect.destroy(); orb.warningRect = null; }
+        orb.x = orb.chargeStartX;
+        orb.y = spec.floorY;
+        orb.state = 'charging';
+        orb.chargeEndTime = time + spec.chargeStayMs;
+        if (orb.body) orb.body.enable = false;
+        // 라인-원 판정 (순간이동 궤적).
+        const halfW = spec.orbSize;
+        for (const player of [this.player1, this.player2]) {
+            if (!player || !player.sprite || !player.sprite.active) continue;
+            if (!player.canBeHit(time)) continue;
+            const dist = this.pointToSegmentDistance(
+                player.sprite.x, player.sprite.y,
+                orb.chargeStartX, orb.chargeStartY,
+                orb.chargeStartX, spec.floorY,
+            );
+            if (dist <= halfW + player.size / 2) {
+                player.onHit(time);
+                this.recordBotHit('ceiling-charge', null, player);
+                this.lives -= 1;
+                this.updateUI();
+                if (this.lives <= 0) {
+                    this.gameOver = true;
+                    this.showGameOverMessage();
+                }
+            }
+        }
+        // 잔상 (raikouAfterimages 재활용, 씬 이미 관리 중).
+        const N = spec.afterimageCount ?? 5;
+        const fadeMs = spec.afterimageFadeMs ?? 300;
+        const startY = orb.chargeStartY;
+        const endY = spec.floorY;
+        for (let i = 1; i <= N; i += 1) {
+            const t = i / (N + 1);
+            const ay = startY + (endY - startY) * t;
+            const g = this.add.circle(orb.chargeStartX, ay, spec.orbSize, spec.color);
+            g.setDepth(20).setAlpha(0.5);
+            this.raikouAfterimages.push({ sprite: g, expireAt: time + fadeMs, fadeMs });
+        }
+    }
+
+    destroyCeilingOrbits() {
+        if (this.ceilingOrbs) {
+            for (const o of this.ceilingOrbs) {
+                if (o && o.warningRect) o.warningRect.destroy();
+                if (o && o.active) o.destroy();
+            }
+        }
+        this.ceilingOrbs = [];
+        this.ceilingSpec = null;
+        this.ceilingCharge = null;
     }
 
     updateOrbCarriers(time, delta) {
@@ -1463,7 +1784,7 @@ class GameScene extends Phaser.Scene {
         if (!player.canBeHit(time)) return;
         player.onHit(time);
         this.recordBotHit('bullet', this.classifyBossBullet(bullet), player);
-        if (!bullet.isGear && !bullet.isElectricField) bullet.destroy();
+        if (!bullet.isGear && !bullet.isElectricField && !bullet.isCeilingOrb) bullet.destroy();
         this.lives -= 1;
         this.updateUI();
         if (this.lives <= 0) {
@@ -1512,6 +1833,7 @@ class GameScene extends Phaser.Scene {
     onBossOrbitHit(orb) {
         if (this.boss.isDead()) return;
         const time = this.time.now;
+        orb.lastContactTime = time;
         if (time - orb.lastHitTargetTime < orb.weaponSpec.contactCooldownMs) return;
         orb.lastHitTargetTime = time;
         this.boss.onHit(orb.weaponSpec.damage * this.bossDamageMultiplier());
@@ -1536,6 +1858,7 @@ class GameScene extends Phaser.Scene {
     onRaikouOrbitHit(raikou, orb) {
         if (!this.boss || this.boss.isDead()) return;
         const time = this.time.now;
+        orb.lastContactTime = time;
         if (time - orb.lastHitTargetTime < orb.weaponSpec.contactCooldownMs) return;
         orb.lastHitTargetTime = time;
         this.boss.onHit(orb.weaponSpec.damage);
@@ -1565,6 +1888,8 @@ class GameScene extends Phaser.Scene {
         this.snowflakesGroup.children.each((s) => s && s.destroy());
         this.turretsGroup.children.each((t) => t && t.destroy());
         this.turretSpawnerSpec = null;
+        this.doopaCores = [];
+        this.destroyCeilingOrbits();
         this.suicideDronesGroup.children.each((d) => d && d.destroy());
         this.suicideDroneSpawnerSpec = null;
         this.despawnBirdEmitters();
@@ -1973,6 +2298,7 @@ class GameScene extends Phaser.Scene {
         if (!turret.active || turret.hp <= 0) return;
         if (turret.invincible) return;
         const time = this.time.now;
+        orb.lastContactTime = time;
         if (time - orb.lastHitTargetTime < orb.weaponSpec.contactCooldownMs) return;
         orb.lastHitTargetTime = time;
         turret.hp -= orb.weaponSpec.damage;
@@ -2214,6 +2540,7 @@ class GameScene extends Phaser.Scene {
     onDroneOrbitHit(drone, orb) {
         if (!drone.active || drone.hp <= 0) return;
         const time = this.time.now;
+        orb.lastContactTime = time;
         if (time - orb.lastHitTargetTime < orb.weaponSpec.contactCooldownMs) return;
         orb.lastHitTargetTime = time;
         drone.hp -= orb.weaponSpec.damage;
@@ -2418,6 +2745,7 @@ class GameScene extends Phaser.Scene {
     onHarvesterOrbitHit(drone, orb) {
         if (!drone.active || drone.hp <= 0) return;
         const time = this.time.now;
+        orb.lastContactTime = time;
         if (time - orb.lastHitTargetTime < orb.weaponSpec.contactCooldownMs) return;
         orb.lastHitTargetTime = time;
         drone.hp -= orb.weaponSpec.damage;
@@ -3189,6 +3517,7 @@ class GameScene extends Phaser.Scene {
         if (!this.boss || this.boss.isDead()) return;
         if (!entei.state || entei.state === 'entering') return;
         const time = this.time.now;
+        orb.lastContactTime = time;
         if (time - orb.lastHitTargetTime < orb.weaponSpec.contactCooldownMs) return;
         orb.lastHitTargetTime = time;
         this.boss.onHit(orb.weaponSpec.damage);

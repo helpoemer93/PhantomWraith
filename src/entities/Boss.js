@@ -36,6 +36,21 @@ class Boss {
             scene.physics.add.existing(this.sprite);
             this.sprite.body.setImmovable(true);
             this.sprite.body.setSize(data.size, data.size);
+        } else if (data.id === 'doopapang' && scene.textures.exists('doopapang-sprite')) {
+            if (!scene.anims.exists('doopapang-fly')) {
+                scene.anims.create({
+                    key: 'doopapang-fly',
+                    frames: scene.anims.generateFrameNumbers('doopapang-sprite', { start: 0, end: 1 }),
+                    frameRate: 3,
+                    repeat: -1,
+                });
+            }
+            this.sprite = scene.add.sprite(startX, startY, 'doopapang-sprite');
+            this.sprite.play('doopapang-fly');
+            this.sprite.setDisplaySize(data.size * 2, data.size * 2);
+            scene.physics.add.existing(this.sprite);
+            this.sprite.body.setImmovable(true);
+            this.sprite.body.setSize(data.size, data.size);
         } else if (data.id === 'freezer' && scene.textures.exists('freezer-sprite')) {
             if (!scene.anims.exists('freezer-fly')) {
                 scene.anims.create({
@@ -167,6 +182,9 @@ class Boss {
         }
         if (phase.turretConnections && this.scene.startTurretConnections) {
             this.scene.startTurretConnections(phase.turretConnections);
+        }
+        if (phase.ceilingOrbits && this.scene.startCeilingOrbits) {
+            this.scene.startCeilingOrbits(phase.ceilingOrbits);
         }
         if (this.data.id === 'freezer' && index === 1 && this.scene.startFreezerWind) {
             this.scene.startFreezerWind();

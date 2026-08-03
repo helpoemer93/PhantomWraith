@@ -78,6 +78,7 @@ class WeaponPreview {
                 this.player.x, this.player.y,
                 w.orbSize ?? 8, w.color
             );
+            orb.setAlpha(0.6);
             orb.phaseOffset = (i / count) * Math.PI * 2;
             this.orbs.push(orb);
         }
@@ -143,6 +144,7 @@ class WeaponPreview {
         const sprite = this.scene.add.rectangle(
             x, y, w.width ?? 6, w.height ?? 14, w.color
         );
+        sprite.setAlpha(0.6);
         const rad = Math.atan2(vy, vx);
         sprite.rotation = rad + Math.PI / 2;
         this.bullets.push({
@@ -154,6 +156,7 @@ class WeaponPreview {
 
     spawnHomingBullet(x, y, w, speed) {
         const sprite = this.scene.add.circle(x, y, w.radius ?? 5, w.color);
+        sprite.setAlpha(0.6);
         this.bullets.push({
             sprite, vx: 0, vy: -speed, w, alive: true, homing: true,
             currentSpeed: speed,

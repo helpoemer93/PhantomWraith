@@ -43,6 +43,11 @@ class BootScene extends Phaser.Scene {
             'Image/metagross-sprite-4f.png',
             { frameWidth: 676, frameHeight: 369 },
         );
+        this.load.spritesheet(
+            'doopapang-sprite',
+            'Image/doopapang-sprite-2f.png',
+            { frameWidth: 1024, frameHeight: 1024 },
+        );
 
         this.load.image('latias-sprite', 'Image/latias-sprite-1f.png');
         this.load.image('latios-sprite', 'Image/latios-sprite-1f.png');

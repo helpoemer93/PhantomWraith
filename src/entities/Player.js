@@ -96,8 +96,14 @@ class Player {
                 orb.body.setAllowGravity(false);
                 orb.weaponSpec = w;
                 orb.phaseOffset = (orbIndex / totalOrbs) * Math.PI * 2;
+                orb.currentAngle = orb.phaseOffset;
                 orb.owner = this;
                 orb.lastHitTargetTime = 0;
+                orb.lastContactTime = -Infinity;
+                // 궤도체마다 시차 두고 미사일 발사 (같은 프레임 동시 발사 방지).
+                const intervalMs = w.missileIntervalMs ?? 500;
+                orb.lastMissileTime = this.scene.time.now
+                    - intervalMs * (1 - orbIndex / totalOrbs);
                 this.orbitOrbs.push(orb);
                 if (this.scene.orbitOrbs) this.scene.orbitOrbs.add(orb);
                 orbIndex += 1;
@@ -147,11 +153,31 @@ class Player {
     updateOrbits(time) {
         const cx = this.sprite.x;
         const cy = this.sprite.y;
+        const canFire = this.canFire;
+        // 이전 프레임 대비 경과 시간 (Player 자체 추적, delta 인자 없이).
+        const dt = this._lastOrbitTime == null ? 0
+            : Math.min(0.1, (time - this._lastOrbitTime) / 1000);
+        this._lastOrbitTime = time;
+
         for (const orb of this.orbitOrbs) {
             const w = orb.weaponSpec;
-            const angle = orb.phaseOffset + (time / 1000) * w.rotationSpeedRadPerSec;
-            orb.x = cx + Math.cos(angle) * w.radius;
-            orb.y = cy + Math.sin(angle) * w.radius;
+            // 타격중이면 회전속도 감쇠.
+            const slowMs = w.rotationSlowDurationMs ?? 100;
+            const slowMul = w.rotationSlowMultiplier ?? 0.4;
+            const isSlowed = time - orb.lastContactTime < slowMs;
+            const angSpeed = w.rotationSpeedRadPerSec * (isSlowed ? slowMul : 1);
+            orb.currentAngle += angSpeed * dt;
+            orb.x = cx + Math.cos(orb.currentAngle) * w.radius;
+            orb.y = cy + Math.sin(orb.currentAngle) * w.radius;
+
+            if (!canFire) continue;
+            const interval = w.missileIntervalMs ?? 500;
+            if (time - orb.lastMissileTime >= interval) {
+                if (this.scene.spawnOrbitMissile
+                    && this.scene.spawnOrbitMissile(orb.x, orb.y, w)) {
+                    orb.lastMissileTime = time;
+                }
+            }
         }
     }
 
