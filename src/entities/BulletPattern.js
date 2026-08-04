@@ -82,6 +82,8 @@ class BulletPattern {
                 sprite = this.scene.spawnOrbCarrier(originX, originY, angleDeg, this.spec);
             } else if (this.spec.shape === 'doopaOrb') {
                 sprite = this.scene.spawnDoopaOrb(originX, originY, this.spec);
+            } else if (this.spec.shape === 'doopaSpiral') {
+                sprite = this.scene.spawnDoopaSpiral(originX, originY, this.spec);
             } else if (this.spec.shape === 'snowflake') {
                 if (this.spec.snowflake) {
                     sprite = this.scene.spawnSnowflake(originX, originY, vx, vy, angleDeg, this.spec.snowflake);

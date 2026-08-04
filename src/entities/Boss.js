@@ -16,7 +16,8 @@ class Boss {
         this.baseAttackLastTime = 0;
         this.pendingNextPhase = null;
         this.pendingStartTime = 0;
-        this.phaseTransitionMs = 5000;
+        this.phaseTransitionMs = data.phaseTransitionMs ?? 5000;
+        this.movementFrozen = false;
 
         const startX = GameConfig.GAME_WIDTH / 2;
         const startY = data.startY ?? 140;
@@ -147,6 +148,7 @@ class Boss {
         const phase = this.data.phases[index];
         if (!phase) return;
         if (phase.resetSideDirection) this.sideDirection = 1;
+        this.movementFrozen = !!phase.movementFrozen;
         if (phase.clouds && this.scene.spawnClouds) {
             this.scene.spawnClouds(phase.clouds);
         }
@@ -186,6 +188,9 @@ class Boss {
         if (phase.ceilingOrbits && this.scene.startCeilingOrbits) {
             this.scene.startCeilingOrbits(phase.ceilingOrbits);
         }
+        if (phase.doopaHoles && this.scene.startDoopaHolesPhase) {
+            this.scene.startDoopaHolesPhase(phase.doopaHoles);
+        }
         if (this.data.id === 'freezer' && index === 1 && this.scene.startFreezerWind) {
             this.scene.startFreezerWind();
         }
@@ -210,7 +215,9 @@ class Boss {
 
         const move = this.data.movement ?? {};
         const type = move.type ?? 'pendulum';
-        if (type === 'pendulum') {
+        if (this.movementFrozen) {
+            // 두파팡 페이즈2 등: pendulum 정지, 위치는 씬 로직(인터루드 이동 후 고정)이 유지.
+        } else if (type === 'pendulum') {
             const speed = move.speedRadPerSec ?? 1.0;
             const range = move.rangePx ?? 100;
             const t = (time - this.spawnTime) / 1000;

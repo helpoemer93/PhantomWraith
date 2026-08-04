@@ -49,6 +49,14 @@ class GameScene extends Phaser.Scene {
         this.ceilingOrbs = [];
         this.ceilingSpec = null;
         this.ceilingCharge = null;
+        // 두파팡 페이즈2: BH/WH 4개(회전) + 스파이럴 구체(HP있음, 격파가능).
+        this.spiralOrbsGroup = this.physics.add.group();
+        this.spiralOrbCores = [];
+        this.doopaHolesSpec = null;
+        this.blackHoles = [];
+        this.whiteHoles = [];
+        this.holesRotation = 0;
+        this.doopaCenteringState = null;
         // 스이쿤 페이즈 1 라이코 관련 상태 (라이코는 항상 1개체).
         this.raikou = null;
         this.raikouSpec = null;
@@ -198,6 +206,23 @@ class GameScene extends Phaser.Scene {
         this.physics.add.overlap(
             this.harvesterDronesGroup, this.bossBullets,
             (d, b) => this.onHarvesterTouchBossBullet(d, b)
+        );
+        // 두파팡 페이즈2 스파이럴 구체: 플레이어 피격·플레이어 총알로 격파 가능.
+        this.physics.add.overlap(
+            this.player1.sprite, this.spiralOrbsGroup,
+            (s, o) => this.onPlayerHit(this.player1, o)
+        );
+        this.physics.add.overlap(
+            this.player2.sprite, this.spiralOrbsGroup,
+            (s, o) => this.onPlayerHit(this.player2, o)
+        );
+        this.physics.add.overlap(
+            this.spiralOrbsGroup, this.playerBullets,
+            (o, b) => this.onSpiralOrbShot(o, b)
+        );
+        this.physics.add.overlap(
+            this.spiralOrbsGroup, this.orbitOrbs,
+            (o, ob) => this.onSpiralOrbOrbitHit(o, ob)
         );
 
         this.uiLives = this.add.text(10, 10, '', {
@@ -535,6 +560,9 @@ class GameScene extends Phaser.Scene {
         this.updateOrbCarriers(time, delta);
         this.updateDoopaOrbs(time, delta);
         this.updateCeilingOrbits(time, delta);
+        this.updateDoopaCentering(time, delta);
+        this.updateDoopaHoles(time, delta);
+        this.updateSpiralOrbs(time, delta);
         this.updateHomingBullets(delta);
         this.updateSeekingMissiles(delta);
         this.updateEndpointDecelSpiral();
@@ -1152,6 +1180,325 @@ class GameScene extends Phaser.Scene {
         this.ceilingCharge = null;
     }
 
+    // ===== 두파팡 페이즈2: 인터루드(중앙 이동+홀 배치) + 스파이럴 구체 + 워프/회복/게이지 =====
+
+    // 인터루드 시작. 보스 위치를 tween으로 중앙 이동, 기존 공격 정리, 5초 무적.
+    startDoopaCentering(spec) {
+        // 진행 중 doopaOrb·기타 공격 즉시 정리 (인터루드 동안 필드 clean).
+        this.boss.activePatterns = [];
+        this.doopaCores = [];
+        this.bossBullets.children.each((b) => {
+            if (b && b.active && !b.isCeilingOrb) b.destroy();
+        });
+        // 페이즈2 진입까지 무적 (인터루드 3초 + 페이즈2 초입 2초 = 5초).
+        const now = this.time.now;
+        const untilTime = now + (spec.invincibleMs ?? 5000);
+        if (this.player1) this.player1.hitImmunityUntil = untilTime;
+        if (this.player2) this.player2.hitImmunityUntil = untilTime;
+        // 두파팡 위치 이동 상태 저장 (updateDoopaCentering에서 tween).
+        this.boss.movementFrozen = true;
+        this.doopaCenteringState = {
+            startTime: now,
+            fromX: this.boss.sprite.x,
+            fromY: this.boss.sprite.y,
+            toX: spec.centerX ?? 240,
+            toY: spec.centerY ?? 400,
+            descentMs: spec.descentMs ?? 1500,
+            holeFadeInMs: spec.holeFadeInMs ?? 1500,
+            holesSpawned: false,
+            spec,
+        };
+        this.doopaHolesSpec = spec.holes;
+    }
+
+    updateDoopaCentering(time, delta) {
+        const st = this.doopaCenteringState;
+        if (!st) return;
+        const elapsed = time - st.startTime;
+        const t = Math.min(1, elapsed / st.descentMs);
+        // easeOut 느낌: 1 - (1-t)^2
+        const eased = 1 - (1 - t) * (1 - t);
+        this.boss.sprite.x = st.fromX + (st.toX - st.fromX) * eased;
+        this.boss.sprite.y = st.fromY + (st.toY - st.fromY) * eased;
+        if (t >= 1 && !st.holesSpawned) {
+            this.spawnDoopaHoles(st.spec.holes, st.holeFadeInMs);
+            st.holesSpawned = true;
+        }
+        // 인터루드 시각 종료 판정 (descent + fadeIn). currentInterlude 자체는 durationMs로 별도 처리 안 하므로 null 처리.
+        if (elapsed >= st.descentMs + st.holeFadeInMs) {
+            this.doopaCenteringState = null;
+            // interlude visual done — currentInterlude은 페이즈 전환이 완료할 때 자연 소멸.
+            this.currentInterlude = null;
+        }
+    }
+
+    // 페이즈2 진입시 훅. 홀은 인터루드에서 이미 생성됐으므로 여기서는 spec 참조 확인만.
+    startDoopaHolesPhase(spec) {
+        this.doopaHolesSpec = spec;
+        // 인터루드 없이 페이즈2를 바로 진입한 경우 (Lab manual 등) 홀이 없을 수 있음 → 생성.
+        if (!this.blackHoles.length && !this.whiteHoles.length) {
+            this.spawnDoopaHoles(spec, 0);
+        }
+    }
+
+    // 4개 홀 교차 배치 (BH 0°, WH 90°, BH 180°, WH 270°). 페어 (0°BH↔90°WH), (180°BH↔270°WH).
+    // holeIdx = 시계순 인덱스 0~3 (반경 오실레이션 위상 오프셋용).
+    spawnDoopaHoles(spec, fadeInMs) {
+        this.destroyDoopaHoles();
+        if (!this.holesConnectorGraphics) {
+            this.holesConnectorGraphics = this.add.graphics();
+            this.holesConnectorGraphics.setDepth(14);
+        }
+        const cx = spec.centerX ?? 240;
+        const cy = spec.centerY ?? 400;
+        const A0 = spec.radiusBase ?? 140;
+        const r = spec.holeRadius ?? 24;
+        const makeHole = (angleRad, isBlack, pairIdx, holeIdx) => {
+            const x = cx + Math.cos(angleRad) * A0;
+            const y = cy + Math.sin(angleRad) * A0;
+            const color = isBlack ? spec.bhColor : spec.whColor;
+            const stroke = isBlack ? spec.bhStrokeColor : spec.whStrokeColor;
+            const s = this.add.circle(x, y, r, color);
+            s.setStrokeStyle(spec.ringLineWidth ?? 2, stroke);
+            s.setDepth(15);
+            s.baseAngle = angleRad;
+            s.pairIdx = pairIdx;
+            s.holeIdx = holeIdx;
+            s.isBlack = isBlack;
+            if (fadeInMs > 0) {
+                s.setAlpha(0);
+                this.tweens.add({ targets: s, alpha: 1, duration: fadeInMs });
+            }
+            return s;
+        };
+        // 시계 순회: 0°(BH), 90°(WH), 180°(BH), 270°(WH)
+        this.blackHoles.push(makeHole(0, true, 0, 0));
+        this.whiteHoles.push(makeHole(Math.PI / 2, false, 0, 1));
+        this.blackHoles.push(makeHole(Math.PI, true, 1, 2));
+        this.whiteHoles.push(makeHole(-Math.PI / 2, false, 1, 3));
+        this.holesRotation = 0;
+        this.holesOscTime = 0;
+    }
+
+    updateDoopaHoles(time, delta) {
+        if (!this.doopaHolesSpec) return;
+        if (!this.blackHoles.length && !this.whiteHoles.length) return;
+        const spec = this.doopaHolesSpec;
+        const dt = delta / 1000;
+        this.holesRotation += (spec.orbitalSpeedRadPerSec ?? Math.PI / 12) * dt;
+        this.holesOscTime = (this.holesOscTime ?? 0) + dt;
+        const cx = spec.centerX ?? 240;
+        const cy = spec.centerY ?? 400;
+        const A0 = spec.radiusBase ?? 140;
+        const amp = spec.radiusAmp ?? 40;
+        const omega = spec.radiusOmegaRadPerSec ?? 1.5;
+        const phaseStep = spec.radiusPhaseStepRad ?? (Math.PI / 2);
+        const r = spec.holeRadius ?? 24;
+        const updateHole = (h) => {
+            const ang = h.baseAngle + this.holesRotation;
+            const rad = A0 + amp * Math.sin(omega * this.holesOscTime + h.holeIdx * phaseStep);
+            h.x = cx + Math.cos(ang) * rad;
+            h.y = cy + Math.sin(ang) * rad;
+        };
+        for (const h of this.blackHoles) updateHole(h);
+        for (const h of this.whiteHoles) updateHole(h);
+        // 페어 연결 라인 (BH → WH 두꺼운 라인). alpha는 홀 alpha 최소값으로 매칭.
+        const g = this.holesConnectorGraphics;
+        if (g) {
+            g.clear();
+            const w = spec.connectorWidth ?? 30;
+            const col = spec.connectorColor ?? 0x88ccff;
+            const a = spec.connectorAlpha ?? 0.2;
+            for (const bh of this.blackHoles) {
+                const wh = this.whiteHoles.find((wt) => wt.pairIdx === bh.pairIdx);
+                if (!wh) continue;
+                const alpha = Math.min(bh.alpha, wh.alpha) * a;
+                g.lineStyle(w, col, alpha);
+                g.lineBetween(bh.x, bh.y, wh.x, wh.y);
+            }
+        }
+        // 플레이어 vs 블랙홀 (수동 거리 판정, 무적 무관 강제 워프).
+        for (const player of [this.player1, this.player2]) {
+            if (!player || !player.sprite || !player.sprite.active) continue;
+            for (const bh of this.blackHoles) {
+                const dx = player.sprite.x - bh.x;
+                const dy = player.sprite.y - bh.y;
+                if (dx * dx + dy * dy <= (r + player.size / 2) * (r + player.size / 2)) {
+                    const wh = this.whiteHoles.find((wt) => wt.pairIdx === bh.pairIdx);
+                    if (wh) this.warpPlayer(player, bh, wh);
+                    break;
+                }
+            }
+        }
+        // 스파이럴 구체 vs 블랙홀: 즉시 파괴 + 대응 WH에서 360° 10발 사출.
+        for (const orb of this.spiralOrbsGroup.getChildren()) {
+            if (!orb || !orb.active) continue;
+            for (const bh of this.blackHoles) {
+                const dx = orb.x - bh.x;
+                const dy = orb.y - bh.y;
+                if (dx * dx + dy * dy <= (r + orb.orbRadius) * (r + orb.orbRadius)) {
+                    const wh = this.whiteHoles.find((wt) => wt.pairIdx === bh.pairIdx);
+                    if (wh) this.fireWh360(wh, time);
+                    orb.destroy();
+                    break;
+                }
+            }
+        }
+    }
+
+    warpPlayer(player, bh, wh) {
+        // 대응 화이트홀 위치로 즉시 순간이동. 다음 프레임 재접촉 방지 위해 밖으로 살짝 밀기.
+        const cx = this.doopaHolesSpec.centerX ?? 240;
+        const cy = this.doopaHolesSpec.centerY ?? 400;
+        // WH에서 중앙 반대 방향(=바깥) 벡터로 살짝 밀어냄.
+        const outDx = wh.x - cx;
+        const outDy = wh.y - cy;
+        const outLen = Math.hypot(outDx, outDy) || 1;
+        const push = (this.doopaHolesSpec.holeRadius ?? 24) + player.size / 2 + 4;
+        player.sprite.x = wh.x + (outDx / outLen) * push;
+        player.sprite.y = wh.y + (outDy / outLen) * push;
+    }
+
+    // WH에서 360°/N발 즉시 사출. 짧은 flash로 발사 시각적 신호.
+    fireWh360(wh, time) {
+        const spec = this.doopaHolesSpec;
+        const n = spec.wh360Count ?? 10;
+        const speed = spec.wh360BulletSpeed ?? 220;
+        const r = spec.wh360BulletRadius ?? 6;
+        const color = spec.wh360BulletColor ?? 0xff88ff;
+        // 짧은 확장 링 flash.
+        const flash = this.add.circle(wh.x, wh.y, spec.holeRadius ?? 24, 0xffffff, 0);
+        flash.setStrokeStyle(3, color);
+        flash.setDepth(16);
+        this.tweens.add({
+            targets: flash,
+            radius: (spec.holeRadius ?? 24) * 2.0,
+            alpha: 0,
+            duration: spec.wh360FlashMs ?? 100,
+            onComplete: () => flash.destroy(),
+        });
+        for (let i = 0; i < n; i += 1) {
+            const a = (i / n) * Math.PI * 2;
+            const vx = Math.cos(a) * speed;
+            const vy = Math.sin(a) * speed;
+            this.spawnColoredCircleBullet(wh.x, wh.y, vx, vy, r, color);
+        }
+    }
+
+    // BulletPattern.doopaSpiral 진입점. 3구체(HP 있음, 격파 가능) 스폰.
+    spawnDoopaSpiral(originX, originY, spec) {
+        const sp = spec.spiral ?? {};
+        const count = sp.count ?? 3;
+        const orbRadius = sp.radius ?? 10;
+        const orbColor = sp.color ?? 0x88ff88;
+        const hp = sp.hp ?? 15;
+        const angularSpeed = sp.angularSpeedRadPerSec ?? 2.5;
+        const radiusGrowth = sp.radiusGrowthPxPerSec ?? 60;
+        const initialRadius = sp.initialRadius ?? 0;
+        const time = this.time.now;
+        const core = {
+            x: originX,
+            y: originY,
+            angularSpeed,
+            radiusGrowth,
+            spawnTime: time,
+            orbs: [],
+        };
+        for (let i = 0; i < count; i += 1) {
+            const phaseAngle = (i / count) * Math.PI * 2;
+            const px = originX + Math.cos(phaseAngle) * initialRadius;
+            const py = originY + Math.sin(phaseAngle) * initialRadius;
+            const orb = this.add.circle(px, py, orbRadius, orbColor);
+            this.physics.add.existing(orb);
+            this.spiralOrbsGroup.add(orb);
+            orb.body.setCircle(orbRadius);
+            orb.isSpiralOrb = true;
+            orb.orbRadius = orbRadius;
+            orb.hp = hp;
+            orb.maxHp = hp;
+            orb.core = core;
+            orb.currentAngle = phaseAngle;
+            orb.currentRadius = initialRadius;
+            orb.warpCooldownUntil = 0;
+            // stroke로 시각 강조 (보스 총알 스타일과 구분: 격파 가능 표시).
+            orb.setStrokeStyle(2, 0xffffff);
+            orb.isStroked = true; // applyBossBulletStyling 자동 skip
+            core.orbs.push(orb);
+        }
+        this.spiralOrbCores.push(core);
+        return null;
+    }
+
+    updateSpiralOrbs(time, delta) {
+        if (!this.spiralOrbCores || this.spiralOrbCores.length === 0) return;
+        const dt = delta / 1000;
+        const margin = 60;
+        const remaining = [];
+        for (const core of this.spiralOrbCores) {
+            const aliveOrbs = core.orbs.filter((o) => o && o.active);
+            for (const orb of aliveOrbs) {
+                orb.currentAngle += core.angularSpeed * dt;
+                orb.currentRadius += core.radiusGrowth * dt;
+                orb.x = core.x + Math.cos(orb.currentAngle) * orb.currentRadius;
+                orb.y = core.y + Math.sin(orb.currentAngle) * orb.currentRadius;
+                // 예측용 velocity: 반경 성장(반경 방향) + 접선 회전(접선 방향).
+                const tanSpd = core.angularSpeed * orb.currentRadius;
+                const cosA = Math.cos(orb.currentAngle);
+                const sinA = Math.sin(orb.currentAngle);
+                const vx = cosA * core.radiusGrowth - sinA * tanSpd;
+                const vy = sinA * core.radiusGrowth + cosA * tanSpd;
+                if (orb.body) orb.body.setVelocity(vx, vy);
+                // 화면 밖 도달 시 조용히 소멸 (회복 없음).
+                if (orb.x < -margin || orb.x > GameConfig.GAME_WIDTH + margin
+                    || orb.y < -margin || orb.y > GameConfig.GAME_HEIGHT + margin) {
+                    orb.destroy();
+                }
+            }
+            const surviving = core.orbs.filter((o) => o && o.active);
+            if (surviving.length > 0) remaining.push(core);
+        }
+        this.spiralOrbCores = remaining;
+    }
+
+    onSpiralOrbShot(orb, bullet) {
+        if (!orb.active || orb.hp <= 0) return;
+        if (bullet.pierce) {
+            const time = this.time.now;
+            const cd = bullet.contactCooldownMs ?? 0;
+            if (time - (bullet.lastHitTargetTime ?? -Infinity) < cd) return;
+            bullet.lastHitTargetTime = time;
+            orb.hp -= bullet.damage ?? 1;
+        } else {
+            orb.hp -= bullet.damage ?? 1;
+            bullet.destroy();
+        }
+        if (orb.hp <= 0) orb.destroy();
+    }
+
+    onSpiralOrbOrbitHit(orb, orbitOrb) {
+        if (!orb.active || orb.hp <= 0) return;
+        const time = this.time.now;
+        orbitOrb.lastContactTime = time;
+        if (time - orbitOrb.lastHitTargetTime < orbitOrb.weaponSpec.contactCooldownMs) return;
+        orbitOrb.lastHitTargetTime = time;
+        orb.hp -= orbitOrb.weaponSpec.damage;
+        if (orb.hp <= 0) orb.destroy();
+    }
+
+    destroyDoopaHoles() {
+        if (this.blackHoles) {
+            for (const h of this.blackHoles) if (h && h.active) h.destroy();
+        }
+        if (this.whiteHoles) {
+            for (const h of this.whiteHoles) if (h && h.active) h.destroy();
+        }
+        this.blackHoles = [];
+        this.whiteHoles = [];
+        this.holesRotation = 0;
+        this.holesOscTime = 0;
+        if (this.holesConnectorGraphics) this.holesConnectorGraphics.clear();
+    }
+
     updateOrbCarriers(time, delta) {
         const dt = delta / 1000;
         this.bossBullets.children.each((b) => {
@@ -1721,6 +2068,13 @@ class GameScene extends Phaser.Scene {
             }
             return;
         }
+        if (inter.spec.type === 'doopaCentering') {
+            this.startDoopaCentering(inter.spec);
+            this.currentInterlude = inter;
+            this.interludeStartTime = this.time.now;
+            this.interludeFrozen = false;
+            return;
+        }
         this.currentInterlude = inter;
         this.interludeStartTime = this.time.now;
         this.interludeFrozen = false;
@@ -1784,7 +2138,7 @@ class GameScene extends Phaser.Scene {
         if (!player.canBeHit(time)) return;
         player.onHit(time);
         this.recordBotHit('bullet', this.classifyBossBullet(bullet), player);
-        if (!bullet.isGear && !bullet.isElectricField && !bullet.isCeilingOrb) bullet.destroy();
+        if (!bullet.isGear && !bullet.isElectricField && !bullet.isCeilingOrb && !bullet.isSpiralOrb) bullet.destroy();
         this.lives -= 1;
         this.updateUI();
         if (this.lives <= 0) {
@@ -1889,6 +2243,10 @@ class GameScene extends Phaser.Scene {
         this.turretsGroup.children.each((t) => t && t.destroy());
         this.turretSpawnerSpec = null;
         this.doopaCores = [];
+        this.spiralOrbCores = [];
+        this.spiralOrbsGroup.children.each((o) => o && o.destroy());
+        this.destroyDoopaHoles();
+        this.doopaCenteringState = null;
         this.destroyCeilingOrbits();
         this.suicideDronesGroup.children.each((d) => d && d.destroy());
         this.suicideDroneSpawnerSpec = null;
@@ -2951,6 +3309,8 @@ class GameScene extends Phaser.Scene {
         if (!b) return 'unknown';
         if (b.isGear) return 'gear';
         if (b.isOrbit) return 'orbit';
+        if (b.isSpiralOrb) return 'spiralOrb';
+        if (b.isCeilingOrb) return 'ceilingOrb';
         if (b.isElectricField) return 'electricField';
         if (b.hasWavyMotion) return 'wavy';
         if (b.hasHoming) return 'homing';
