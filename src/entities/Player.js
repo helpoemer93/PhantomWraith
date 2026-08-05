@@ -121,9 +121,10 @@ class Player {
         else if (this.keys.down.isDown) vy = speed;
         this.sprite.body.setVelocity(vx, vy);
 
-        const auraOn = this.isInvincible || time < this.hitImmunityUntil;
-        this.outline.setVisible(auraOn);
-        if (auraOn) {
+        // 상태 무적(isInvincible)만 노란 outline pulse. 피격 후 짧은 무적은 outline 없이 sprite 알파 깜빡으로만 표현
+        // → 상대 캐릭터가 무적인지, 잠깐 맞고 무적인지 시각으로 구분.
+        this.outline.setVisible(this.isInvincible);
+        if (this.isInvincible) {
             const phase = Math.sin(time * 0.006);
             this.outline.setScale(1.0 + 0.15 * phase);
             this.outline.setAlpha(0.55 + 0.35 * phase);

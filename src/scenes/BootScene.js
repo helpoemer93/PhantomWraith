@@ -20,6 +20,7 @@ class BootScene extends Phaser.Scene {
         this.load.audio('freezer-p3-derive', 'Sound/freezer-p3-derive.mp3');
         this.load.audio('metagross-bgm', 'Sound/metagross-bgm.mp3');
         this.load.audio('suicune-bgm', 'Sound/suicune-bgm.mp3');
+        this.load.audio('doopapang-bgm', 'Sound/Nebula Ascension.mp3');
         this.load.audio('suicune-wave', 'Sound/스이쿤파도.mp3');
         this.load.audio('suicune-charge', 'Sound/스이쿤돌진.mp3');
         this.load.audio('suicune-water', 'Sound/스이쿤물대포.mp3');

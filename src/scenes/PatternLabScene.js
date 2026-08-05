@@ -57,6 +57,8 @@ class PatternLabScene extends Phaser.Scene {
         this.whiteHoles = [];
         this.holesRotation = 0;
         this.doopaCenteringState = null;
+        this.doopaAscentState = null;
+        this.doopaGatheredOrbSwarm = null;
         this.turretConnectionsSpec = null;
         this.turretConnectionsGraphics = null;
         this.turretMotionSpec = null;
@@ -318,6 +320,8 @@ class PatternLabScene extends Phaser.Scene {
         this.destroyDoopaHoles();
         this.doopaHolesSpec = null;
         this.doopaCenteringState = null;
+        this.doopaAscentState = null;
+        this.destroyDoopaGatheredOrbs();
         this.turretSpawnerSpec = null;
         this.suicideDroneSpawnerSpec = null;
         this.harvesterDroneSpawnerSpec = null;
@@ -401,6 +405,20 @@ class PatternLabScene extends Phaser.Scene {
         this.mode = 'phase';
         this.activePhaseIndex = idx;
         this.hitCount = 0;
+        // 두파팡 페이즈3: 이전 페이즈에서 스폰돼야 할 천장 궤도 9개 + 4홀을 미리 배치해야
+        // startDoopaGatheredOrbs가 orbs를 이관받을 수 있음. 두파팡도 페이즈3 위치(상승 후)로 배치.
+        if (this.bossData.id === 'doopapang' && idx === 2) {
+            const p1 = this.bossData.phases[0];
+            const p2 = this.bossData.phases[1];
+            if (p1?.ceilingOrbits && this.startCeilingOrbits) {
+                this.startCeilingOrbits(p1.ceilingOrbits);
+            }
+            if (p2?.doopaHoles && this.startDoopaHolesPhase) {
+                this.startDoopaHolesPhase(p2.doopaHoles);
+            }
+            this.boss.sprite.x = 240;
+            this.boss.sprite.y = 140;
+        }
         this.boss.enterPhase(idx);
         this.spawnPlayers();
         this.updateModeUI();
@@ -472,6 +490,13 @@ class PatternLabScene extends Phaser.Scene {
             this.interludeFrozen = false;
             return;
         }
+        if (inter.spec.type === 'doopaAscent') {
+            this.startDoopaAscent(inter.spec);
+            this.currentInterlude = inter;
+            this.interludeStartTime = this.time.now;
+            this.interludeFrozen = false;
+            return;
+        }
         this.currentInterlude = inter;
         this.interludeStartTime = this.time.now;
         this.interludeFrozen = false;
@@ -497,6 +522,8 @@ class PatternLabScene extends Phaser.Scene {
         this.destroyDoopaHoles();
         this.doopaHolesSpec = null;
         this.doopaCenteringState = null;
+        this.doopaAscentState = null;
+        this.destroyDoopaGatheredOrbs();
         this.turretSpawnerSpec = null;
         this.suicideDroneSpawnerSpec = null;
         this.harvesterDroneSpawnerSpec = null;
@@ -689,6 +716,8 @@ class PatternLabScene extends Phaser.Scene {
         this.updateDeceleratingBullets(delta);
         this.updateOrbCarriers(time, delta);
         this.updateDoopaOrbs(time, delta);
+        this.updateDoopaAscent(time, delta);
+        this.updateDoopaGatheredOrbs(time, delta);
         this.updateCeilingOrbits(time, delta);
         this.updateDoopaCentering(time, delta);
         this.updateDoopaHoles(time, delta);
@@ -838,6 +867,13 @@ class PatternLabScene extends Phaser.Scene {
         const active = candidates.find((p) => !p.isInvincible);
         if (active) return { x: active.sprite.x, y: active.sprite.y };
         return { x: 240, y: 500 };
+    }
+
+    getInvinciblePlayerPos() {
+        const candidates = [this.player1, this.player2].filter((p) => p);
+        const inv = candidates.find((p) => p.isInvincible);
+        if (inv) return { x: inv.sprite.x, y: inv.sprite.y };
+        return this.getActivePlayerPos();
     }
 
     spawnColoredCircleBullet(x, y, vx, vy, radius, color) {
@@ -995,9 +1031,6 @@ class PatternLabScene extends Phaser.Scene {
             if (b && b.active && !b.isCeilingOrb) b.destroy();
         });
         const now = this.time.now;
-        const untilTime = now + (spec.invincibleMs ?? 5000);
-        if (this.player1) this.player1.hitImmunityUntil = untilTime;
-        if (this.player2) this.player2.hitImmunityUntil = untilTime;
         this.boss.movementFrozen = true;
         this.doopaCenteringState = {
             startTime: now,
@@ -1135,6 +1168,21 @@ class PatternLabScene extends Phaser.Scene {
                 }
             }
         }
+        // 플레이어 탄환 vs 블랙홀: WH 워프 (GameScene 미러).
+        this.playerBullets.children.each((bullet) => {
+            if (!bullet || !bullet.active || !bullet.body) return;
+            if (bullet.warpCooldownUntil && time < bullet.warpCooldownUntil) return;
+            for (const bh of this.blackHoles) {
+                const dx = bullet.x - bh.x;
+                const dy = bullet.y - bh.y;
+                const br = (bullet.body.width ?? 6) / 2;
+                if (dx * dx + dy * dy <= (r + br) * (r + br)) {
+                    const wh = this.whiteHoles.find((wt) => wt.pairIdx === bh.pairIdx);
+                    if (wh) this.warpPlayerBullet(bullet, wh, time);
+                    return;
+                }
+            }
+        });
     }
 
     warpPlayer(player, bh, wh) {
@@ -1146,6 +1194,35 @@ class PatternLabScene extends Phaser.Scene {
         const push = (this.doopaHolesSpec.holeRadius ?? 24) + player.size / 2 + 4;
         player.sprite.x = wh.x + (outDx / outLen) * push;
         player.sprite.y = wh.y + (outDy / outLen) * push;
+    }
+
+    warpPlayerBullet(bullet, wh, time) {
+        const spec = this.doopaHolesSpec;
+        const cx = spec.centerX ?? 240;
+        const cy = spec.centerY ?? 400;
+        const outDx = wh.x - cx;
+        const outDy = wh.y - cy;
+        const outLen = Math.hypot(outDx, outDy) || 1;
+        const nx = outDx / outLen;
+        const ny = outDy / outLen;
+        const push = (spec.holeRadius ?? 24) + 6;
+        bullet.x = wh.x + nx * push;
+        bullet.y = wh.y + ny * push;
+        const vx = bullet.body.velocity.x;
+        const vy = bullet.body.velocity.y;
+        const speed = Math.hypot(vx, vy) || 1;
+        bullet.body.setVelocity(nx * speed, ny * speed);
+        bullet.warpCooldownUntil = time + 500;
+        const flash = this.add.circle(wh.x, wh.y, spec.holeRadius ?? 24, 0xffffff, 0);
+        flash.setStrokeStyle(2, spec.wh360BulletColor ?? 0xff88ff);
+        flash.setDepth(16);
+        this.tweens.add({
+            targets: flash,
+            radius: (spec.holeRadius ?? 24) * 1.5,
+            alpha: 0,
+            duration: spec.wh360FlashMs ?? 100,
+            onComplete: () => flash.destroy(),
+        });
     }
 
     fireWh360(wh, time) {
@@ -1280,6 +1357,325 @@ class PatternLabScene extends Phaser.Scene {
         this.holesRotation = 0;
         this.holesOscTime = 0;
         if (this.holesConnectorGraphics) this.holesConnectorGraphics.clear();
+    }
+
+    // ===== 두파팡 페이즈2 → 페이즈3 인터루드 (doopaAscent): 두파팡 상승만 — GameScene 미러 =====
+
+    startDoopaAscent(spec) {
+        this.boss.activePatterns = [];
+        this.doopaCores = [];
+        this.spiralOrbCores = [];
+        this.spiralOrbsGroup.children.each((o) => { if (o) o.destroy(); });
+        this.bossBullets.children.each((b) => {
+            if (b && b.active && !b.isCeilingOrb) b.destroy();
+        });
+        this.boss.movementFrozen = true;
+        this.doopaAscentState = {
+            startTime: this.time.now,
+            fromX: this.boss.sprite.x,
+            fromY: this.boss.sprite.y,
+            toX: spec.targetX ?? 240,
+            toY: spec.targetY ?? 140,
+            ascendMs: spec.ascendMs ?? 6000,
+        };
+    }
+
+    updateDoopaAscent(time, delta) {
+        const st = this.doopaAscentState;
+        if (!st) return;
+        const elapsed = time - st.startTime;
+        const t = Math.min(1, elapsed / st.ascendMs);
+        this.boss.sprite.x = st.fromX + (st.toX - st.fromX) * t;
+        this.boss.sprite.y = st.fromY + (st.toY - st.fromY) * t;
+        if (elapsed >= st.ascendMs) {
+            this.doopaAscentState = null;
+            this.currentInterlude = null;
+        }
+    }
+
+    // ===== 두파팡 페이즈3: 천장 궤도 orb 순차 돌진 시스템 — GameScene 미러 =====
+
+    startDoopaGatheredOrbs(spec) {
+        if (!this.ceilingOrbs || this.ceilingOrbs.length === 0) return;
+        for (const o of this.ceilingOrbs) {
+            if (!o) continue;
+            if (o.warningRect) { o.warningRect.destroy(); o.warningRect = null; }
+            if (o.body) o.body.enable = true;
+        }
+        const orbs = this.ceilingOrbs.filter((o) => o && o.active);
+        this.ceilingOrbs = [];
+        this.ceilingSpec = null;
+        this.ceilingCharge = null;
+        const items = orbs.map((orb, i) => ({
+            orb,
+            slotIndex: i,
+            fromX: orb.x,
+            fromY: orb.y,
+            chargeState: 'gathering',
+            warningEndTime: 0,
+            stayEndTime: 0,
+            chargeFromX: 0, chargeFromY: 0,
+            chargeTargetX: 0, chargeTargetY: 0,
+            warningLine: null,
+        }));
+        this.doopaGatheredOrbSwarm = {
+            items,
+            spec,
+            startTime: this.time.now,
+            spinAngle: 0,
+            gatheringDone: false,
+            pendulumStartTime: 0,
+            nextChargeIndex: 0,
+            nextChargeTime: 0,
+        };
+    }
+
+    updateDoopaGatheredOrbs(time, delta) {
+        if (!this.doopaGatheredOrbSwarm) return;
+        if (!this.boss || !this.boss.sprite || !this.boss.sprite.active) return;
+        const swarm = this.doopaGatheredOrbSwarm;
+        const spec = swarm.spec;
+        const dt = delta / 1000;
+        const spinSpeed = spec.spinSpeedRadPerSec ?? 0.5;
+        swarm.spinAngle += spinSpeed * dt;
+        const tweenMs = spec.tweenMs ?? 2000;
+        const orbitRadius = spec.orbitRadius ?? 100;
+        const n = swarm.items.length;
+        if (n === 0) return;
+
+        if (!swarm.gatheringDone) {
+            const elapsed = time - swarm.startTime;
+            const t = Math.min(1, elapsed / tweenMs);
+            const eased = 1 - (1 - t) * (1 - t);
+            const bossX = this.boss.sprite.x;
+            const bossY = this.boss.sprite.y;
+            for (const item of swarm.items) {
+                const orb = item.orb;
+                if (!orb || !orb.active) continue;
+                const slotAngle = (item.slotIndex / n) * Math.PI * 2 + swarm.spinAngle;
+                const targetX = bossX + Math.cos(slotAngle) * orbitRadius;
+                const targetY = bossY + Math.sin(slotAngle) * orbitRadius;
+                orb.x = item.fromX + (targetX - item.fromX) * eased;
+                orb.y = item.fromY + (targetY - item.fromY) * eased;
+                if (orb.body) orb.body.setVelocity(0, 0);
+            }
+            if (t >= 1) {
+                swarm.gatheringDone = true;
+                swarm.pendulumStartTime = time;
+                swarm.nextChargeTime = time + (spec.charge?.intervalMs ?? 500);
+                swarm.snipeNextCycleTime = time + (spec.snipe?.firstDelayMs ?? 3000);
+                swarm.snipeActive = false;
+                swarm.snipeVolleysFired = 0;
+                swarm.snipeNextVolleyTime = 0;
+                swarm.snipeCenterAngle = 0;
+                for (const item of swarm.items) item.chargeState = 'orbiting';
+            }
+            return;
+        }
+
+        const snipeSpec = spec.snipe;
+        if (snipeSpec) {
+            if (!swarm.snipeActive && time >= swarm.snipeNextCycleTime) {
+                const target = this.getInvinciblePlayerPos();
+                swarm.snipeCenterAngle = Math.atan2(
+                    target.y - this.boss.sprite.y,
+                    target.x - this.boss.sprite.x,
+                );
+                swarm.snipeActive = true;
+                swarm.snipeVolleysFired = 0;
+                swarm.snipeNextVolleyTime = time;
+                swarm.snipeNextCycleTime = time + (snipeSpec.cycleMs ?? 6000);
+            }
+            if (swarm.snipeActive) {
+                const total = snipeSpec.volleyCount ?? 4;
+                if (time >= swarm.snipeNextVolleyTime && swarm.snipeVolleysFired < total) {
+                    this.fireDoopaSnipeVolley(swarm.snipeCenterAngle, snipeSpec);
+                    swarm.snipeVolleysFired += 1;
+                    swarm.snipeNextVolleyTime = time + (snipeSpec.volleyIntervalMs ?? 200);
+                }
+                if (swarm.snipeVolleysFired >= total) swarm.snipeActive = false;
+            }
+        }
+
+        if (spec.pendulum) {
+            const ts = (time - swarm.pendulumStartTime) / 1000;
+            const speed = spec.pendulum.speedRadPerSec ?? (Math.PI / 5);
+            const range = spec.pendulum.rangePx ?? 130;
+            this.boss.sprite.x = GameConfig.GAME_WIDTH / 2 + Math.sin(ts * speed) * range;
+        }
+        const bossX = this.boss.sprite.x;
+        const bossY = this.boss.sprite.y;
+
+        if (time >= swarm.nextChargeTime) {
+            const item = swarm.items[swarm.nextChargeIndex];
+            if (item && item.orb && item.orb.active && item.chargeState === 'orbiting') {
+                this.beginDoopaGatheredWarning(item, spec, time);
+                swarm.nextChargeIndex = (swarm.nextChargeIndex + 1) % n;
+                swarm.nextChargeTime = time + (spec.charge?.intervalMs ?? 500);
+            }
+        }
+
+        const returnSpeed = spec.charge?.returnSpeedPxPerSec ?? 200;
+        for (const item of swarm.items) {
+            const orb = item.orb;
+            if (!orb || !orb.active) continue;
+
+            if (item.chargeState === 'orbiting') {
+                const slotAngle = (item.slotIndex / n) * Math.PI * 2 + swarm.spinAngle;
+                orb.x = bossX + Math.cos(slotAngle) * orbitRadius;
+                orb.y = bossY + Math.sin(slotAngle) * orbitRadius;
+                if (orb.body) {
+                    const tang = spinSpeed * orbitRadius;
+                    orb.body.setVelocity(-Math.sin(slotAngle) * tang, Math.cos(slotAngle) * tang);
+                }
+            } else if (item.chargeState === 'warning') {
+                orb.x = item.chargeFromX;
+                orb.y = item.chargeFromY;
+                if (orb.body) orb.body.setVelocity(0, 0);
+                if (time >= item.warningEndTime) {
+                    this.performDoopaGatheredCharge(item, spec, time);
+                }
+            } else if (item.chargeState === 'staying') {
+                orb.x = item.chargeTargetX;
+                orb.y = item.chargeTargetY;
+                if (orb.body) orb.body.setVelocity(0, 0);
+                if (time >= item.stayEndTime) {
+                    item.chargeState = 'returning';
+                }
+            } else if (item.chargeState === 'returning') {
+                const slotAngle = (item.slotIndex / n) * Math.PI * 2 + swarm.spinAngle;
+                const slotX = bossX + Math.cos(slotAngle) * orbitRadius;
+                const slotY = bossY + Math.sin(slotAngle) * orbitRadius;
+                const dx = slotX - orb.x;
+                const dy = slotY - orb.y;
+                const dist = Math.hypot(dx, dy);
+                const step = returnSpeed * dt;
+                if (dist <= step || dist < 0.5) {
+                    orb.x = slotX;
+                    orb.y = slotY;
+                    item.chargeState = 'orbiting';
+                    if (orb.body) orb.body.setVelocity(0, 0);
+                } else {
+                    orb.x += (dx / dist) * step;
+                    orb.y += (dy / dist) * step;
+                    if (orb.body) orb.body.setVelocity((dx / dist) * returnSpeed, (dy / dist) * returnSpeed);
+                }
+            }
+        }
+    }
+
+    beginDoopaGatheredWarning(item, spec, time) {
+        const target = this.getActivePlayerPos();
+        const orb = item.orb;
+        const sourceX = orb.x;
+        const sourceY = orb.y;
+        const end = this.extendRayToBounds(sourceX, sourceY, target.x - sourceX, target.y - sourceY);
+        const targetX = end.x;
+        const targetY = end.y;
+        item.chargeFromX = sourceX;
+        item.chargeFromY = sourceY;
+        item.chargeTargetX = targetX;
+        item.chargeTargetY = targetY;
+        item.chargeState = 'warning';
+        item.warningEndTime = time + (spec.charge?.warningMs ?? 350);
+        const dx = targetX - sourceX;
+        const dy = targetY - sourceY;
+        const len = Math.hypot(dx, dy);
+        const angle = Math.atan2(dy, dx);
+        const w = spec.charge?.lineWidth ?? 24;
+        const rect = this.add.rectangle(
+            sourceX, sourceY, len, w,
+            spec.charge?.warningColor ?? 0xff3333,
+        );
+        rect.setOrigin(0, 0.5);
+        rect.setRotation(angle);
+        rect.setAlpha(spec.charge?.warningAlpha ?? 0.35);
+        rect.setDepth(20);
+        item.warningLine = rect;
+    }
+
+    performDoopaGatheredCharge(item, spec, time) {
+        const orb = item.orb;
+        const sourceX = item.chargeFromX;
+        const sourceY = item.chargeFromY;
+        const targetX = item.chargeTargetX;
+        const targetY = item.chargeTargetY;
+        if (item.warningLine) { item.warningLine.destroy(); item.warningLine = null; }
+        orb.x = targetX;
+        orb.y = targetY;
+        item.chargeState = 'staying';
+        item.stayEndTime = time + (spec.charge?.stayMs ?? 150);
+        const halfW = (spec.charge?.lineWidth ?? 24) / 2;
+        for (const player of [this.player1, this.player2]) {
+            if (!player || !player.sprite || !player.sprite.active) continue;
+            if (!player.canBeHit(time)) continue;
+            const dist = this.pointToSegmentDistance(
+                player.sprite.x, player.sprite.y,
+                sourceX, sourceY, targetX, targetY,
+            );
+            if (dist <= halfW + player.size / 2) {
+                player.onHit(time);
+                this.hitCount = (this.hitCount ?? 0) + 1;
+                if (this.updateModeUI) this.updateModeUI();
+            }
+        }
+        const N = spec.charge?.afterimageCount ?? 5;
+        const fadeMs = spec.charge?.afterimageFadeMs ?? 300;
+        for (let i = 1; i <= N; i += 1) {
+            const t = i / (N + 1);
+            const ax = sourceX + (targetX - sourceX) * t;
+            const ay = sourceY + (targetY - sourceY) * t;
+            const g = this.add.circle(ax, ay, orb.radius, orb.fillColor);
+            g.setDepth(20).setAlpha(0.5);
+            this.raikouAfterimages.push({ sprite: g, expireAt: time + fadeMs, fadeMs });
+        }
+    }
+
+    destroyDoopaGatheredOrbs() {
+        if (this.doopaGatheredOrbSwarm) {
+            for (const item of this.doopaGatheredOrbSwarm.items) {
+                if (item.warningLine) { item.warningLine.destroy(); item.warningLine = null; }
+                if (item.orb && item.orb.active) item.orb.destroy();
+            }
+        }
+        this.doopaGatheredOrbSwarm = null;
+    }
+
+    fireDoopaSnipeVolley(centerAngle, spec) {
+        const bossX = this.boss.sprite.x;
+        const bossY = this.boss.sprite.y;
+        const n = spec.pellets ?? 15;
+        const step = Phaser.Math.DegToRad(spec.spreadDeg ?? 2);
+        const half = (n - 1) / 2;
+        const speed = spec.bulletSpeed ?? 300;
+        const r = spec.bulletRadius ?? 4;
+        const color = spec.bulletColor ?? 0xff88cc;
+        for (let i = 0; i < n; i += 1) {
+            const angle = centerAngle + (i - half) * step;
+            this.spawnColoredCircleBullet(
+                bossX, bossY,
+                Math.cos(angle) * speed, Math.sin(angle) * speed,
+                r, color,
+            );
+        }
+    }
+
+    extendRayToBounds(sx, sy, dx, dy) {
+        const W = GameConfig.GAME_WIDTH;
+        const H = GameConfig.GAME_HEIGHT;
+        const len = Math.hypot(dx, dy);
+        if (len < 0.001) return { x: sx, y: sy };
+        const ux = dx / len;
+        const uy = dy / len;
+        const ts = [];
+        if (ux > 0.0001) ts.push((W - sx) / ux);
+        else if (ux < -0.0001) ts.push((0 - sx) / ux);
+        if (uy > 0.0001) ts.push((H - sy) / uy);
+        else if (uy < -0.0001) ts.push((0 - sy) / uy);
+        const positives = ts.filter((v) => v > 0);
+        if (positives.length === 0) return { x: sx, y: sy };
+        const t = Math.min(...positives);
+        return { x: sx + ux * t, y: sy + uy * t };
     }
 
     spawnDoopaOrb(originX, originY, spec) {

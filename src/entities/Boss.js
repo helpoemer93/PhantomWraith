@@ -191,6 +191,9 @@ class Boss {
         if (phase.doopaHoles && this.scene.startDoopaHolesPhase) {
             this.scene.startDoopaHolesPhase(phase.doopaHoles);
         }
+        if (phase.doopaGatheredOrbs && this.scene.startDoopaGatheredOrbs) {
+            this.scene.startDoopaGatheredOrbs(phase.doopaGatheredOrbs);
+        }
         if (this.data.id === 'freezer' && index === 1 && this.scene.startFreezerWind) {
             this.scene.startFreezerWind();
         }
