@@ -948,17 +948,46 @@ class PatternLabScene extends Phaser.Scene {
 
     pickCeilingChargePair(spec) {
         const candidates = this.ceilingOrbs.filter((o) => o.state === 'orbiting');
+        const count = spec.chargeCount ?? 2;
         const minGap = spec.chargeMinXGap ?? 0;
-        const validPairs = [];
-        for (let i = 0; i < candidates.length; i += 1) {
-            for (let j = i + 1; j < candidates.length; j += 1) {
-                if (Math.abs(candidates[i].x - candidates[j].x) >= minGap) {
-                    validPairs.push([candidates[i], candidates[j]]);
+        const aimNormalCount = spec.chargeAimNormalCount ?? 0;
+
+        if (count === 2 && aimNormalCount === 0) {
+            const validPairs = [];
+            for (let i = 0; i < candidates.length; i += 1) {
+                for (let j = i + 1; j < candidates.length; j += 1) {
+                    if (Math.abs(candidates[i].x - candidates[j].x) >= minGap) {
+                        validPairs.push([candidates[i], candidates[j]]);
+                    }
+                }
+            }
+            if (validPairs.length === 0) return null;
+            return validPairs[Math.floor(Math.random() * validPairs.length)];
+        }
+
+        const chosen = [];
+        if (aimNormalCount > 0) {
+            const target = this.getActivePlayerPos();
+            if (target) {
+                const sorted = [...candidates].sort((a, b) =>
+                    Math.abs(a.x - target.x) - Math.abs(b.x - target.x),
+                );
+                for (let i = 0; i < aimNormalCount && i < sorted.length; i += 1) {
+                    chosen.push(sorted[i]);
                 }
             }
         }
-        if (validPairs.length === 0) return null;
-        return validPairs[Math.floor(Math.random() * validPairs.length)];
+        const remaining = candidates.filter((c) => !chosen.includes(c));
+        for (let i = remaining.length - 1; i > 0; i -= 1) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [remaining[i], remaining[j]] = [remaining[j], remaining[i]];
+        }
+        for (const cand of remaining) {
+            if (chosen.length >= count) break;
+            const ok = chosen.every((c) => Math.abs(c.x - cand.x) >= minGap);
+            if (ok) chosen.push(cand);
+        }
+        return chosen.length === count ? chosen : null;
     }
 
     triggerCeilingWarning(orb, time, spec) {
@@ -1099,10 +1128,14 @@ class PatternLabScene extends Phaser.Scene {
             }
             return s;
         };
-        this.blackHoles.push(makeHole(0, true, 0, 0));
-        this.whiteHoles.push(makeHole(Math.PI / 2, false, 0, 1));
-        this.blackHoles.push(makeHole(Math.PI, true, 1, 2));
-        this.whiteHoles.push(makeHole(-Math.PI / 2, false, 1, 3));
+        const pairCount = spec.pairCount ?? 2;
+        const angleStep = (Math.PI * 2) / (pairCount * 2);
+        for (let p = 0; p < pairCount; p += 1) {
+            const bhAngle = angleStep * (2 * p);
+            const whAngle = angleStep * (2 * p + 1);
+            this.blackHoles.push(makeHole(bhAngle, true, p, 2 * p));
+            this.whiteHoles.push(makeHole(whAngle, false, p, 2 * p + 1));
+        }
         this.holesRotation = 0;
         this.holesOscTime = 0;
     }
@@ -1198,20 +1231,13 @@ class PatternLabScene extends Phaser.Scene {
 
     warpPlayerBullet(bullet, wh, time) {
         const spec = this.doopaHolesSpec;
-        const cx = spec.centerX ?? 240;
-        const cy = spec.centerY ?? 400;
-        const outDx = wh.x - cx;
-        const outDy = wh.y - cy;
-        const outLen = Math.hypot(outDx, outDy) || 1;
-        const nx = outDx / outLen;
-        const ny = outDy / outLen;
         const push = (spec.holeRadius ?? 24) + 6;
-        bullet.x = wh.x + nx * push;
-        bullet.y = wh.y + ny * push;
+        bullet.x = wh.x;
+        bullet.y = wh.y - push;
         const vx = bullet.body.velocity.x;
         const vy = bullet.body.velocity.y;
         const speed = Math.hypot(vx, vy) || 1;
-        bullet.body.setVelocity(nx * speed, ny * speed);
+        bullet.body.setVelocity(0, -speed);
         bullet.warpCooldownUntil = time + 500;
         const flash = this.add.circle(wh.x, wh.y, spec.holeRadius ?? 24, 0xffffff, 0);
         flash.setStrokeStyle(2, spec.wh360BulletColor ?? 0xff88ff);
@@ -1679,7 +1705,16 @@ class PatternLabScene extends Phaser.Scene {
     }
 
     spawnDoopaOrb(originX, originY, spec) {
-        const target = this.getActivePlayerPos();
+        this._spawnDoopaOrbAt(originX, originY, spec, this.getActivePlayerPos());
+        if (spec.alsoAimAtInvincible) {
+            const inv = this.getInvinciblePlayerPos ? this.getInvinciblePlayerPos() : null;
+            if (inv) this._spawnDoopaOrbAt(originX, originY, spec, inv);
+        }
+        return null;
+    }
+
+    _spawnDoopaOrbAt(originX, originY, spec, target) {
+        if (!target) return null;
         const dx = target.x - originX;
         const dy = target.y - originY;
         const dist = Math.hypot(dx, dy);
@@ -2265,11 +2300,12 @@ class PatternLabScene extends Phaser.Scene {
         const w = spec.triangleWidth ?? 6;
         const h = spec.triangleHeight ?? 18;
         const color = spec.bulletColor ?? GameConfig.ENEMY_BULLET_COLOR;
+        // 양수 vertex 로 shift → Phaser 가 정확한 displayOrigin 을 잡음 → sprite.x/y = visual center
         const tri = this.add.triangle(
             x, y,
-            0, -h / 2,
-            -w / 2, h / 2,
-            w / 2, h / 2,
+            w / 2, 0,
+            0, h,
+            w, h,
             color,
         );
         this.physics.add.existing(tri);

@@ -14,7 +14,7 @@ const makeDoopaOrbSpec = (speedSign) => ({
         count: 4,
         radius: 12,
         color: 0x88ff88,
-        orbitRadius: 60,
+        orbitRadius: 75,
         orbitSpeedRadPerSec: 1.2 * speedSign,
     },
 });
@@ -80,6 +80,7 @@ const DoopapangPhase3Sequence = {
 const DoopaHolesSpec = {
     centerX: 240,
     centerY: 400,
+    pairCount: 2,     // BH-WH 쌍 개수 (기본 2쌍=4홀). Lv5에서 3쌍=6홀로 확장
     radiusBase: 120,   // 최소 40 확보 (스파이럴이 두파팡 정중앙에서 나가는 초입 40px는 홀 없음 → 흡수 유예)
     radiusAmp: 80,     // 반경 40~200 오실. 무적 저격 봉인은 유지(두파팡 몸통 30 안까지 홀 가장자리 침투)
     radiusOmegaRadPerSec: 1.5,
@@ -126,16 +127,16 @@ const DoopapangData = {
             ceilingOrbits: {
                 cx: 240, cy: 60,
                 a: 190, b: 25,
-                count: 9,
+                count: 12,
                 orbSize: 12,
                 color: 0xff8844,
                 rotationSpeedRadPerSec: 1.0,
-                chargeIntervalMs: 3000,
+                chargeIntervalMs: 2000,
                 chargeCount: 2,
                 chargeMinXGap: 150,
                 warningMs: 500,
                 chargeStayMs: 200,
-                returnSpeedPxPerSec: 120,
+                returnSpeedPxPerSec: 180,
                 floorY: 800,
                 afterimageCount: 5,
                 afterimageFadeMs: 300,
@@ -223,11 +224,36 @@ const Doopapang = {
         const lv = Math.max(1, level);
         const scale = Math.pow(1.20, lv - 1);
         d.maxHp = Math.round(d.maxHp * scale);
+
+        // Lv2: 무적저격 사이클 쿨타임 6s → 5s
+        if (lv >= 2) {
+            d.phases[2].doopaGatheredOrbs.snipe.cycleMs = 5000;
+        }
+        // Lv3: 천장궤도 돌진 2 → 3 (그 중 1개는 일반 상태 캐릭터 최근접 orb)
+        if (lv >= 3) {
+            d.phases[0].ceilingOrbits.chargeCount = 3;
+            d.phases[0].ceilingOrbits.chargeAimNormalCount = 1;
+        }
+        // Lv4: 궤도구체 격발 2번 중 1번(-1 방향)은 무적 상태 캐릭터에게 추가 궤도구체 발사
+        if (lv >= 4) {
+            d.phases[0].sequence.steps[2].spec.alsoAimAtInvincible = true;
+        }
+        // Lv5: 홀 4 → 6 (BH·WH 쌍 2 → 3). phases[1].doopaHoles + 인터루드 doopa_holes 둘 다 갱신
+        if (lv >= 5) {
+            d.phases[1].doopaHoles.pairCount = 3;
+            const holesInterlude = (d.interludes ?? []).find((it) => it.name === 'doopa_holes');
+            if (holesInterlude?.spec?.holes) holesInterlude.spec.holes.pairCount = 3;
+        }
         return d;
     },
 
     getLevelUpLabels(level) {
         if (level <= 1) return [];
-        return ['HP +20%'];
+        const labels = ['HP +20%'];
+        if (level === 2) labels.push('무적저격 쿨 6s → 5s');
+        else if (level === 3) labels.push('천장궤도 돌진 2→3 (1개는 일반 상태 캐릭터 최근접)');
+        else if (level === 4) labels.push('궤도구체 격발 중 1회는 무적 상태 캐릭터에게도 추가 발사');
+        else if (level === 5) labels.push('홀 4→6 (BH·WH 쌍 +1)');
+        return labels;
     },
 };

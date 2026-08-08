@@ -958,7 +958,16 @@ class GameScene extends Phaser.Scene {
     // 스폰 순간 3구체 모두 두파팡 위치에 있다가 궤도 반경으로 튀어나감 (transitionMs).
     // 도착 후 중심점이 조준 방향 직선 이동, 구체는 공전하며 따라감.
     spawnDoopaOrb(originX, originY, spec) {
-        const target = this.getActivePlayerPos();
+        this._spawnDoopaOrbAt(originX, originY, spec, this.getActivePlayerPos());
+        if (spec.alsoAimAtInvincible) {
+            const inv = this.getInvinciblePlayerPos ? this.getInvinciblePlayerPos() : null;
+            if (inv) this._spawnDoopaOrbAt(originX, originY, spec, inv);
+        }
+        return null;
+    }
+
+    _spawnDoopaOrbAt(originX, originY, spec, target) {
+        if (!target) return null;
         const dx = target.x - originX;
         const dy = target.y - originY;
         const dist = Math.hypot(dx, dy);
@@ -1112,17 +1121,48 @@ class GameScene extends Phaser.Scene {
 
     pickCeilingChargePair(spec) {
         const candidates = this.ceilingOrbs.filter((o) => o.state === 'orbiting');
+        const count = spec.chargeCount ?? 2;
         const minGap = spec.chargeMinXGap ?? 0;
-        const validPairs = [];
-        for (let i = 0; i < candidates.length; i += 1) {
-            for (let j = i + 1; j < candidates.length; j += 1) {
-                if (Math.abs(candidates[i].x - candidates[j].x) >= minGap) {
-                    validPairs.push([candidates[i], candidates[j]]);
+        const aimNormalCount = spec.chargeAimNormalCount ?? 0;
+
+        // 기본 경로 (count=2 & 조준 없음): 원본 페어 알고리즘 유지
+        if (count === 2 && aimNormalCount === 0) {
+            const validPairs = [];
+            for (let i = 0; i < candidates.length; i += 1) {
+                for (let j = i + 1; j < candidates.length; j += 1) {
+                    if (Math.abs(candidates[i].x - candidates[j].x) >= minGap) {
+                        validPairs.push([candidates[i], candidates[j]]);
+                    }
+                }
+            }
+            if (validPairs.length === 0) return null;
+            return validPairs[Math.floor(Math.random() * validPairs.length)];
+        }
+
+        // 확장 경로 (Lv3+): 일반 상태 캐릭터 최근접 orb 먼저 확보 + 나머지 랜덤 fill (minGap 유지)
+        const chosen = [];
+        if (aimNormalCount > 0) {
+            const target = this.getActivePlayerPos();
+            if (target) {
+                const sorted = [...candidates].sort((a, b) =>
+                    Math.abs(a.x - target.x) - Math.abs(b.x - target.x),
+                );
+                for (let i = 0; i < aimNormalCount && i < sorted.length; i += 1) {
+                    chosen.push(sorted[i]);
                 }
             }
         }
-        if (validPairs.length === 0) return null;
-        return validPairs[Math.floor(Math.random() * validPairs.length)];
+        const remaining = candidates.filter((c) => !chosen.includes(c));
+        for (let i = remaining.length - 1; i > 0; i -= 1) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [remaining[i], remaining[j]] = [remaining[j], remaining[i]];
+        }
+        for (const cand of remaining) {
+            if (chosen.length >= count) break;
+            const ok = chosen.every((c) => Math.abs(c.x - cand.x) >= minGap);
+            if (ok) chosen.push(cand);
+        }
+        return chosen.length === count ? chosen : null;
     }
 
     triggerCeilingWarning(orb, time, spec) {
@@ -1250,8 +1290,8 @@ class GameScene extends Phaser.Scene {
         }
     }
 
-    // 4개 홀 교차 배치 (BH 0°, WH 90°, BH 180°, WH 270°). 페어 (0°BH↔90°WH), (180°BH↔270°WH).
-    // holeIdx = 시계순 인덱스 0~3 (반경 오실레이션 위상 오프셋용).
+    // BH-WH 교차 배치. pairCount 쌍(기본 2쌍=4홀, Lv5는 3쌍=6홀). 페어 인덱스로 BH↔WH 매칭.
+    // holeIdx = 시계순 인덱스 (반경 오실레이션 위상 오프셋용).
     spawnDoopaHoles(spec, fadeInMs) {
         this.destroyDoopaHoles();
         if (!this.holesConnectorGraphics) {
@@ -1280,11 +1320,15 @@ class GameScene extends Phaser.Scene {
             }
             return s;
         };
-        // 시계 순회: 0°(BH), 90°(WH), 180°(BH), 270°(WH)
-        this.blackHoles.push(makeHole(0, true, 0, 0));
-        this.whiteHoles.push(makeHole(Math.PI / 2, false, 0, 1));
-        this.blackHoles.push(makeHole(Math.PI, true, 1, 2));
-        this.whiteHoles.push(makeHole(-Math.PI / 2, false, 1, 3));
+        // BH-WH 교차 배치. pairCount=2 → 0°/90°/180°/270° (기본), pairCount=3 → 60° 간격 6홀.
+        const pairCount = spec.pairCount ?? 2;
+        const angleStep = (Math.PI * 2) / (pairCount * 2);
+        for (let p = 0; p < pairCount; p += 1) {
+            const bhAngle = angleStep * (2 * p);
+            const whAngle = angleStep * (2 * p + 1);
+            this.blackHoles.push(makeHole(bhAngle, true, p, 2 * p));
+            this.whiteHoles.push(makeHole(whAngle, false, p, 2 * p + 1));
+        }
         this.holesRotation = 0;
         this.holesOscTime = 0;
     }
@@ -1384,23 +1428,16 @@ class GameScene extends Phaser.Scene {
         player.sprite.y = wh.y + (outDy / outLen) * push;
     }
 
-    // 플레이어 탄환 워프: WH 위치로 이동 + 밖 방향으로 속력 유지 재사출. 성질(damage/pierce/homing 등)은 원본 그대로.
+    // 플레이어 탄환 워프: WH 위치로 이동 + 위 방향으로 속력 유지 재사출. 성질(damage/pierce/homing 등)은 원본 그대로.
     warpPlayerBullet(bullet, wh, time) {
         const spec = this.doopaHolesSpec;
-        const cx = spec.centerX ?? 240;
-        const cy = spec.centerY ?? 400;
-        const outDx = wh.x - cx;
-        const outDy = wh.y - cy;
-        const outLen = Math.hypot(outDx, outDy) || 1;
-        const nx = outDx / outLen;
-        const ny = outDy / outLen;
         const push = (spec.holeRadius ?? 24) + 6;
-        bullet.x = wh.x + nx * push;
-        bullet.y = wh.y + ny * push;
+        bullet.x = wh.x;
+        bullet.y = wh.y - push;
         const vx = bullet.body.velocity.x;
         const vy = bullet.body.velocity.y;
         const speed = Math.hypot(vx, vy) || 1;
-        bullet.body.setVelocity(nx * speed, ny * speed);
+        bullet.body.setVelocity(0, -speed);
         bullet.warpCooldownUntil = time + 500;
         // WH 짧은 flash — 스파이럴 wh360과 구별되게 링만 얇게.
         const flash = this.add.circle(wh.x, wh.y, spec.holeRadius ?? 24, 0xffffff, 0);
@@ -2093,11 +2130,12 @@ class GameScene extends Phaser.Scene {
         const w = spec.triangleWidth ?? 6;
         const h = spec.triangleHeight ?? 18;
         const color = spec.bulletColor ?? GameConfig.ENEMY_BULLET_COLOR;
+        // 양수 vertex 로 shift → Phaser 가 정확한 displayOrigin 을 잡음 → sprite.x/y = visual center
         const tri = this.add.triangle(
             x, y,
-            0, -h / 2,
-            -w / 2, h / 2,
-            w / 2, h / 2,
+            w / 2, 0,
+            0, h,
+            w, h,
             color,
         );
         this.physics.add.existing(tri);

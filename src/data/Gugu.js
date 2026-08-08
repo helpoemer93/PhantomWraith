@@ -88,6 +88,7 @@ const GuguData = {
         {
             hpEnterRatio: 2 / 3,
             interludeOnExit: 'bird_burst',
+            sequence: GuguPhase1Sequence,
             endpointDecelSpiral: {
                 triggerCount: 1,
                 count: 5,
@@ -102,6 +103,16 @@ const GuguData = {
         {
             hpEnterRatio: 1 / 3,
             sequence: GuguPhase1Sequence,
+            endpointDecelSpiral: {
+                triggerCount: 1,
+                count: 5,
+                spreadDeg: 15,
+                centerAngleDeg: 90,
+                initSpeed: 180,
+                speedAccel: -100,
+                initAngularRate: 0,
+                angularAccelMagnitude: 0.3,
+            },
             baseAttack: {
                 intervalMs: 500,
                 angles: [-45, -15, 15, 45],
@@ -140,8 +151,9 @@ const Gugu = {
         d.maxHp = Math.round(d.maxHp * scale);
 
         if (lv >= 2) {
-            // 궤도미사일 개수 +5 (10→15)
+            // 궤도미사일 개수 +5 (10→15) — 모든 페이즈 공통 (1/2/3)
             d.phases[0].sequence.steps[0].spec.orbit.count += 5;
+            d.phases[1].sequence.steps[0].spec.orbit.count += 5;
             d.phases[2].sequence.steps[0].spec.orbit.count += 5;
         }
         if (lv >= 3) {
@@ -153,8 +165,9 @@ const Gugu = {
             }
         }
         if (lv >= 4) {
-            // 궤도미사일 시퀀스 pause -0.5초 (4000→3500)
+            // 궤도미사일 시퀀스 pause -0.5초 (4000→3500) — 모든 페이즈 공통
             d.phases[0].sequence.steps[1].durationMs -= 500;
+            d.phases[1].sequence.steps[1].durationMs -= 500;
             d.phases[2].sequence.steps[1].durationMs -= 500;
         }
         if (lv >= 5) {
