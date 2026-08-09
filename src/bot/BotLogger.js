@@ -68,6 +68,16 @@ class BotLogger {
         return this.currentRun ? this.currentRun.hits.length : 0;
     }
 
+    collectWeapons(run) {
+        const set = new Set();
+        const w = run.weapons;
+        if (!w) return set;
+        const push = (arr) => { if (Array.isArray(arr)) for (const id of arr) if (id) set.add(id); };
+        if (Array.isArray(w)) push(w);
+        else { push(w.p1); push(w.p2); }
+        return set;
+    }
+
     loadRuns() {
         try {
             const raw = localStorage.getItem(this.storageKey);
@@ -91,10 +101,26 @@ class BotLogger {
     // 원인별 피격 랭킹 집계.
     // opts.recentN: 최근 N판만 대상 (기본 전체)
     // opts.bossName / opts.bossLv: 필터
+    // opts.contains: 문자열 또는 배열. p1·p2 어디든 지정 무기 전부 장착돼 있어야 통과 (밸런스 실측용)
+    // opts.excludes: 문자열 또는 배열. 지정 무기 중 하나라도 장착돼 있으면 제외
     stats(opts = {}) {
         let runs = this.loadRuns();
         if (opts.bossName) runs = runs.filter((r) => r.bossName === opts.bossName);
         if (opts.bossLv) runs = runs.filter((r) => r.bossLv === opts.bossLv);
+        if (opts.contains) {
+            const req = Array.isArray(opts.contains) ? opts.contains : [opts.contains];
+            runs = runs.filter((r) => {
+                const equipped = this.collectWeapons(r);
+                return req.every((w) => equipped.has(w));
+            });
+        }
+        if (opts.excludes) {
+            const bad = Array.isArray(opts.excludes) ? opts.excludes : [opts.excludes];
+            runs = runs.filter((r) => {
+                const equipped = this.collectWeapons(r);
+                return bad.every((w) => !equipped.has(w));
+            });
+        }
         if (opts.recentN) runs = runs.slice(-opts.recentN);
 
         const causeCounts = {};
@@ -143,6 +169,36 @@ class BotLogger {
         return s;
     }
 
+    // 여러 무기 조합 한 번에 비교. 각 무기별 contains 필터 스탯을 표로.
+    // opts.bossName / opts.bossLv: 공통 필터
+    // opts.weapons: 비교할 무기 ID 배열 (기본 9종 전부)
+    compare(opts = {}) {
+        const list = opts.weapons ?? [
+            'basicLinear', 'piercing', 'spread', 'homing', 'orbit',
+            'boomerang', 'chain', 'beam', 'mine',
+        ];
+        const rows = list.map((w) => {
+            const s = this.stats({
+                bossName: opts.bossName,
+                bossLv: opts.bossLv,
+                contains: w,
+            });
+            return {
+                무기: w,
+                판수: s.총러닝수,
+                승률: s.총러닝수 ? `${Math.round(s.승 / s.총러닝수 * 100)}%` : '-',
+                평균초: s.평균러닝시간초,
+                판당피격: s.판당평균피격,
+            };
+        });
+        const tag = [];
+        if (opts.bossName) tag.push(opts.bossName);
+        if (opts.bossLv) tag.push(`Lv${opts.bossLv}`);
+        console.log(`=== 무기 비교 ${tag.length ? '('+tag.join(' ')+')' : ''} ===`);
+        console.table(rows);
+        return rows;
+    }
+
     // 한 줄 요약. 복사·붙여넣기용. copy() 로 감싸면 클립보드로 들어감.
     shortStats(opts = {}) {
         const s = this.stats(opts);
@@ -165,6 +221,8 @@ if (typeof window !== 'undefined') {
     }
     window.botStats = (opts) => window.__botLoggerInstance.printStats(opts);
     window.botStatsReset = () => window.__botLoggerInstance.reset();
+    // 무기 조합 한 번에 비교 (표). ex: botCompare({ bossName:'구구', bossLv:1 })
+    window.botCompare = (opts) => window.__botLoggerInstance.compare(opts);
     // 한 줄 요약. `copy(botStatsShort({...}))` 로 클립보드 복사.
     window.botStatsShort = (opts) => {
         const line = window.__botLoggerInstance.shortStats(opts);

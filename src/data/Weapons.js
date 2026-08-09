@@ -94,7 +94,7 @@ const Weapons = {
         id: 'chain',
         name: '연쇄번개',
         type: 'chain',
-        intervalMs: 780,
+        intervalMs: 975,
         damage: 1,
         maxTargets: 5,              // 첫 타겟(최근접) + 나머지 랜덤
         linkColor: 0xffee44,

@@ -72,8 +72,11 @@ const AudioSettings = {
     },
 
     // SFX 재생 헬퍼. config.volume 을 sfxFactor 로 스케일.
+    // 창 포커스가 벗어나 있으면 스킵 — 브라우저가 AudioContext를 suspend한 사이
+    // 게임이 저프레임으로 계속 돌면서 쌓이는 큐가 복귀 순간 폭발("왁왁")하는 걸 방지.
     playSfx(scene, key, config = {}) {
         if (!scene.cache.audio.exists(key)) return;
+        if (typeof document !== 'undefined' && !document.hasFocus()) return;
         const sfxFactor = this.load().sfx;
         const base = config.volume ?? 1.0;
         scene.sound.play(key, { ...config, volume: base * sfxFactor });
