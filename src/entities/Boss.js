@@ -9,6 +9,7 @@ class Boss {
             this.data = data;
             this.maxHp = Math.round(data.maxHp * Math.pow(1.20, this.level - 1));
         }
+        this.maxHp = Math.round(this.maxHp * (GameConfig.BOSS_HP_MULTIPLIER ?? 1));
         this.hp = this.maxHp;
         this.phaseIndex = -1;
         this.activePatterns = [];
@@ -36,7 +37,7 @@ class Boss {
             this.sprite.setDisplaySize(data.size * 2, data.size * 2 * (369 / 677));
             scene.physics.add.existing(this.sprite);
             this.sprite.body.setImmovable(true);
-            this.sprite.body.setSize(data.size, data.size);
+            // body 크기 미지정 → 기본값(frame 크기 × scale) = displaySize 그대로. 히트박스 = 이미지.
         } else if (data.id === 'doopapang' && scene.textures.exists('doopapang-sprite')) {
             if (!scene.anims.exists('doopapang-fly')) {
                 scene.anims.create({
@@ -51,7 +52,7 @@ class Boss {
             this.sprite.setDisplaySize(data.size * 2, data.size * 2);
             scene.physics.add.existing(this.sprite);
             this.sprite.body.setImmovable(true);
-            this.sprite.body.setSize(data.size, data.size);
+            // body 크기 미지정 → 기본값(frame 크기 × scale) = displaySize 그대로. 히트박스 = 이미지.
         } else if (data.id === 'freezer' && scene.textures.exists('freezer-sprite')) {
             if (!scene.anims.exists('freezer-fly')) {
                 scene.anims.create({
@@ -66,7 +67,7 @@ class Boss {
             this.sprite.setDisplaySize(data.size * 2, data.size * 2 * (369 / 677));
             scene.physics.add.existing(this.sprite);
             this.sprite.body.setImmovable(true);
-            this.sprite.body.setSize(data.size, data.size);
+            // body 크기 미지정 → 기본값(frame 크기 × scale) = displaySize 그대로. 히트박스 = 이미지.
         } else if (data.id === 'metagross' && scene.textures.exists('metagross-sprite')) {
             if (!scene.anims.exists('metagross-slam')) {
                 scene.anims.create({
@@ -81,7 +82,7 @@ class Boss {
             this.sprite.setDisplaySize(data.size * 2, data.size * 2 * (369 / 676));
             scene.physics.add.existing(this.sprite);
             this.sprite.body.setImmovable(true);
-            this.sprite.body.setSize(data.size, data.size);
+            // body 크기 미지정 → 기본값(frame 크기 × scale) = displaySize 그대로. 히트박스 = 이미지.
         } else if (data.id === 'suicune' && scene.textures.exists('suicune-sprite')) {
             if (!scene.anims.exists('suicune-down')) {
                 scene.anims.create({
@@ -105,7 +106,7 @@ class Boss {
             this.sprite.setDisplaySize(data.size * 2, data.size * 2);
             scene.physics.add.existing(this.sprite);
             this.sprite.body.setImmovable(true);
-            this.sprite.body.setSize(data.size, data.size);
+            // body 크기 미지정 → 기본값(frame 크기 × scale) = displaySize 그대로. 히트박스 = 이미지.
             this.facingDir = 'down';
             this.prevPosX = startX;
             this.prevPosY = startY;
@@ -132,7 +133,7 @@ class Boss {
             );
             scene.physics.add.existing(this.sprite);
             this.sprite.body.setImmovable(true);
-            this.sprite.body.setSize(data.size, data.size);
+            // body 크기 미지정 → 기본값(frame 크기 × scale) = displaySize 그대로. 히트박스 = 이미지.
         }
 
         this.spawnTime = scene.time.now;

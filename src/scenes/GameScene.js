@@ -954,8 +954,12 @@ class GameScene extends Phaser.Scene {
         const need = Math.min((w.maxTargets ?? 5) - 1, remaining.length);
         for (let i = 0; i < need; i += 1) chosen.push(remaining[i]);
 
-        // 각 타겟에 데미지 즉시 적용
-        for (const t of chosen) this.applyDamageToTarget(t, w.damage ?? 1);
+        // 각 타겟에 데미지 즉시 적용 (튕길수록 falloff)
+        const falloff = w.damageFalloffPerBounce ?? 0;
+        for (let i = 0; i < chosen.length; i += 1) {
+            const dmg = (w.damage ?? 1) * Math.pow(1 - falloff, i);
+            this.applyDamageToTarget(chosen[i], dmg);
+        }
 
         // 사슬 라인 시각화
         const g = this.add.graphics().setDepth(12);
@@ -1043,6 +1047,7 @@ class GameScene extends Phaser.Scene {
         const speed = w.explosionBulletSpeed ?? 300;
         const visR = w.explosionBulletRadius ?? 5;
         const hitR = w.explosionBulletHitRadius ?? visR;
+        const alpha = w.explosionBulletAlpha ?? null;
         const dmg = w.explosionBulletDamage ?? 1;
         for (let i = 0; i < n; i += 1) {
             const angle = (i / n) * Math.PI * 2;
@@ -1051,6 +1056,8 @@ class GameScene extends Phaser.Scene {
             // 판정 body가 시각보다 클 때 shape 중심 정렬: offset = visR - hitR
             b.body.setCircle(hitR, visR - hitR, visR - hitR);
             this.playerBullets.add(b);
+            // playerBullets.add가 alpha 0.6 자동 부여 → spec 지정 있으면 override
+            if (alpha != null) b.setAlpha(alpha);
             b.body.setVelocity(Math.cos(angle) * speed, Math.sin(angle) * speed);
             b.damage = dmg;
             b.pierce = false;

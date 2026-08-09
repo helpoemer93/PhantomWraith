@@ -96,6 +96,7 @@ const Weapons = {
         type: 'chain',
         intervalMs: 975,
         damage: 1,
+        damageFalloffPerBounce: 0.10,  // 튕길 때마다 데미지 -10% (1st=1.0, 2nd=0.9, 3rd=0.81…)
         maxTargets: 5,              // 첫 타겟(최근접) + 나머지 랜덤
         linkColor: 0xffee44,
         linkWidth: 2,
@@ -132,7 +133,8 @@ const Weapons = {
         // 폭발 시 사방으로 미사일 N발 발사
         explosionBullets: 8,
         explosionBulletSpeed: 300,
-        explosionBulletRadius: 5,      // 시각 반경
+        explosionBulletRadius: 3,      // 시각 반경 (작게)
+        explosionBulletAlpha: 0.3,     // 파편 투명도 (기본 playerBullet 0.6보다 더 흐림)
         // 판정 반경(18)을 시각과 분리. 접촉 폭발 시 지뢰 중심이 보스 body 바깥 (mine_r 8 + 첫 프레임 이동 ~5)px 지점이라
         // 반경 13 이상이어야 아래로 튀는 파편도 프레임 0에 걸림. 여유 두고 18.
         explosionBulletHitRadius: 18,
