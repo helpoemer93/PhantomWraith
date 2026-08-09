@@ -18,6 +18,7 @@ const GameConfig = {
     INVINCIBLE_STROKE_COLOR: 0xffee00,
     INVINCIBLE_STROKE_WIDTH: 3,
 
-    // 히트박스 이미지 크기 매칭으로 X 폭 2배 확장 → 실전 클리어 시간 감소 보상용 (2026-08-10)
-    BOSS_HP_MULTIPLIER: 2,
+    // 히트박스 이미지 크기 매칭으로 X 폭 2배 확장 → 실전 클리어 시간 감소 보상용.
+    // 2배까진 너무 단단해서 2/3로 완화 (2026-08-10)
+    BOSS_HP_MULTIPLIER: 4 / 3,
 };

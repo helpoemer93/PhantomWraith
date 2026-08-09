@@ -168,8 +168,10 @@ const BulletPredictor = {
         return out;
     },
 
-    // 총알의 유효 반경(판정용). Phaser 총알에 명시적 radius가 있으면 그거, 없으면 기본값.
+    // 총알의 유효 반경(판정용). halfWidth는 월드 디스플레이 반경(스프라이트 스케일 반영).
+    // body.radius는 setCircle 소스 단위 raw 값이라 스케일된 스프라이트에서 잘못 나옴.
     getRadius(bullet, fallback = 6) {
+        if (bullet.body && bullet.body.halfWidth) return bullet.body.halfWidth;
         if (bullet.body && bullet.body.radius) return bullet.body.radius;
         if (bullet.radius) return bullet.radius;
         return fallback;

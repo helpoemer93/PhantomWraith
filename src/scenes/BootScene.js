@@ -68,6 +68,12 @@ class BootScene extends Phaser.Scene {
             'Image/entei-sprite-9f.png',
             { frameWidth: 40, frameHeight: 40 },
         );
+
+        // 메타그로스 관련 강철 포켓몬 스프라이트 (프로젝트 루트에 위치)
+        this.load.image('metagross-gear', '기어르.png');
+        this.load.image('metagross-harvester', '메탕구탑뷰.png');
+        this.load.image('metagross-chaser', '코일탑뷰.png');
+        this.load.image('metagross-turret', '쏘콘탑뷰.png');
     }
 
     create() {

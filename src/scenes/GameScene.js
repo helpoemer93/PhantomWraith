@@ -362,7 +362,7 @@ class GameScene extends Phaser.Scene {
             const droneTimeSamples = [0, 80, 160, 240, 320, 480, 640];
             const pushDroneHazards = (d, radiusPadding, baseArrivalByState) => {
                 if (!d || !d.active || !d.body) return;
-                const r = (d.body.radius ?? 14) + radiusPadding;
+                const r = (d.body.halfWidth ?? d.body.radius ?? 14) + radiusPadding;
                 const baseArrival = baseArrivalByState[d.state] ?? baseArrivalByState.default;
                 // orbiting 상태는 원운동으로 미래 위치 예측 (velocity가 접선이라 직선 예측 부정확).
                 const isOrbiting = d.state === 'orbiting'
@@ -412,14 +412,14 @@ class GameScene extends Phaser.Scene {
             });
             // 스이쿤 페이즈 1/2: 라이코·엔테이 몸통 접촉 회피
             if (this.raikou && this.raikou.active) {
-                const rr = (this.raikou.body?.radius ?? 18) + 15;
+                const rr = (this.raikou.body?.halfWidth ?? this.raikou.body?.radius ?? 18) + 15;
                 staticHazards.push({
                     x: this.raikou.x, y: this.raikou.y,
                     radius: rr, arrivalTime: 0,
                 });
             }
             if (this.entei && this.entei.active && this.entei.state && this.entei.state !== 'entering') {
-                const rr = (this.entei.body?.radius ?? 18) + 15;
+                const rr = (this.entei.body?.halfWidth ?? this.entei.body?.radius ?? 18) + 15;
                 staticHazards.push({
                     x: this.entei.x, y: this.entei.y,
                     radius: rr, arrivalTime: 0,
@@ -3041,17 +3041,27 @@ class GameScene extends Phaser.Scene {
         const vy = (dy / dist) * speed;
         const radius = gearSpec.radius ?? 32;
         const color = gearSpec.color ?? 0x888888;
+        const useSprite = gearSpec.spriteKey && this.textures.exists(gearSpec.spriteKey);
 
-        const gear = this.add.circle(originX, originY, radius, color);
-        gear.setStrokeStyle(3, 0x555555);
+        let gear;
+        if (useSprite) {
+            gear = this.add.sprite(originX, originY, gearSpec.spriteKey);
+            gear.setDisplaySize(radius * 2, radius * 2);
+        } else {
+            gear = this.add.circle(originX, originY, radius, color);
+            gear.setStrokeStyle(3, 0x555555);
+        }
         this.physics.add.existing(gear);
         this.bossBullets.add(gear);
-        gear.body.setCircle(radius);
+        gear.body.setCircle(gear.width / 2);
         gear.body.setVelocity(vx, vy);
 
-        const spoke1 = this.add.rectangle(originX, originY, radius * 2 - 6, 5, 0x555555);
-        const spoke2 = this.add.rectangle(originX, originY, 5, radius * 2 - 6, 0x555555);
-        const inner = this.add.circle(originX, originY, radius * 0.35, 0x333333);
+        let spoke1 = null, spoke2 = null, inner = null;
+        if (!useSprite) {
+            spoke1 = this.add.rectangle(originX, originY, radius * 2 - 6, 5, 0x555555);
+            spoke2 = this.add.rectangle(originX, originY, 5, radius * 2 - 6, 0x555555);
+            inner = this.add.circle(originX, originY, radius * 0.35, 0x333333);
+        }
 
         gear.isGear = true;
         gear.gearState = 'initial';
@@ -3060,6 +3070,7 @@ class GameScene extends Phaser.Scene {
         gear.gearRotAngle = 0;
         gear.gearRadius = radius;
         gear.wallSide = null;
+        gear.usesSprite = useSprite;
         gear.spoke1 = spoke1;
         gear.spoke2 = spoke2;
         gear.inner = inner;
@@ -3142,14 +3153,18 @@ class GameScene extends Phaser.Scene {
             }
 
             g.gearRotAngle += g.gearRotSpeed * dtSec;
-            if (g.spoke1 && g.spoke1.active) {
-                g.spoke1.x = g.x; g.spoke1.y = g.y; g.spoke1.rotation = g.gearRotAngle;
-            }
-            if (g.spoke2 && g.spoke2.active) {
-                g.spoke2.x = g.x; g.spoke2.y = g.y; g.spoke2.rotation = g.gearRotAngle;
-            }
-            if (g.inner && g.inner.active) {
-                g.inner.x = g.x; g.inner.y = g.y;
+            if (g.usesSprite) {
+                g.rotation = g.gearRotAngle;
+            } else {
+                if (g.spoke1 && g.spoke1.active) {
+                    g.spoke1.x = g.x; g.spoke1.y = g.y; g.spoke1.rotation = g.gearRotAngle;
+                }
+                if (g.spoke2 && g.spoke2.active) {
+                    g.spoke2.x = g.x; g.spoke2.y = g.y; g.spoke2.rotation = g.gearRotAngle;
+                }
+                if (g.inner && g.inner.active) {
+                    g.inner.x = g.x; g.inner.y = g.y;
+                }
             }
         });
     }
@@ -3193,11 +3208,18 @@ class GameScene extends Phaser.Scene {
 
     spawnTurret(x, y, turretSpec) {
         const radius = turretSpec.radius ?? 12;
-        const t = this.add.circle(x, y, radius, turretSpec.color ?? 0x999999);
-        t.setStrokeStyle(2, turretSpec.strokeColor ?? 0x666666);
+        const useSprite = turretSpec.spriteKey && this.textures.exists(turretSpec.spriteKey);
+        let t;
+        if (useSprite) {
+            t = this.add.sprite(x, y, turretSpec.spriteKey);
+            t.setDisplaySize(radius * 2, radius * 2);
+        } else {
+            t = this.add.circle(x, y, radius, turretSpec.color ?? 0x999999);
+            t.setStrokeStyle(2, turretSpec.strokeColor ?? 0x666666);
+        }
         this.physics.add.existing(t);
         this.turretsGroup.add(t);
-        t.body.setCircle(radius);
+        t.body.setCircle(t.width / 2);
         t.body.setImmovable(true);
         t.hp = turretSpec.maxHp ?? 70;
         t.maxHp = turretSpec.maxHp ?? 70;
@@ -3379,11 +3401,19 @@ class GameScene extends Phaser.Scene {
         const targetX = cx + Math.cos(initPhi) * R;
         const targetY = cy + Math.sin(initPhi) * R;
 
-        const drone = this.add.circle(startX, startY, droneSpec.radius ?? 15, droneSpec.color ?? 0x666666);
-        drone.setStrokeStyle(2, droneSpec.strokeColor ?? 0x333333);
+        const droneR = droneSpec.radius ?? 15;
+        const useSprite = droneSpec.spriteKey && this.textures.exists(droneSpec.spriteKey);
+        let drone;
+        if (useSprite) {
+            drone = this.add.sprite(startX, startY, droneSpec.spriteKey);
+            drone.setDisplaySize(droneR * 2, droneR * 2);
+        } else {
+            drone = this.add.circle(startX, startY, droneR, droneSpec.color ?? 0x666666);
+            drone.setStrokeStyle(2, droneSpec.strokeColor ?? 0x333333);
+        }
         this.physics.add.existing(drone);
         this.suicideDronesGroup.add(drone);
-        drone.body.setCircle(droneSpec.radius ?? 15);
+        drone.body.setCircle(drone.width / 2);
 
         const halfDeg = (droneSpec.detectionAngleDeg ?? 60) / 2;
         const fan = this.add.arc(
@@ -3453,6 +3483,7 @@ class GameScene extends Phaser.Scene {
                     return;
                 }
                 const moveAngle = Math.atan2(dy, dx);
+                d.rotation = moveAngle - Math.PI / 2; // 스프라이트 기본 방향이 아래(-PI/2 보정)
                 d.fan.x = d.x;
                 d.fan.y = d.y;
                 d.fan.rotation = moveAngle;
@@ -3487,6 +3518,7 @@ class GameScene extends Phaser.Scene {
                 d.body.setVelocity(0, 0);
 
                 const tangentAngle = d.phi + Math.PI / 2;
+                d.rotation = tangentAngle - Math.PI / 2;
                 d.fan.x = d.x;
                 d.fan.y = d.y;
                 d.fan.rotation = tangentAngle;
@@ -3515,6 +3547,7 @@ class GameScene extends Phaser.Scene {
                     }
                 }
             } else if (d.state === 'paused') {
+                d.rotation = Math.atan2(d.chargeVy, d.chargeVx) - Math.PI / 2;
                 d.fan.x = d.x;
                 d.fan.y = d.y;
                 d.fan.setFillStyle(d.spec.fanColor ?? 0xff4444, d.spec.fanAlphaPaused ?? 0.7);
@@ -3579,11 +3612,18 @@ class GameScene extends Phaser.Scene {
 
     spawnHarvesterDrone(x, y, droneSpec) {
         const radius = droneSpec.radius ?? 14;
-        const drone = this.add.circle(x, y, radius, droneSpec.color ?? 0xccaa44);
-        drone.setStrokeStyle(2, droneSpec.strokeColor ?? 0x664422);
+        const useSprite = droneSpec.spriteKey && this.textures.exists(droneSpec.spriteKey);
+        let drone;
+        if (useSprite) {
+            drone = this.add.sprite(x, y, droneSpec.spriteKey);
+            drone.setDisplaySize(radius * 2, radius * 2);
+        } else {
+            drone = this.add.circle(x, y, radius, droneSpec.color ?? 0xccaa44);
+            drone.setStrokeStyle(2, droneSpec.strokeColor ?? 0x664422);
+        }
         this.physics.add.existing(drone);
         this.harvesterDronesGroup.add(drone);
-        drone.body.setCircle(radius);
+        drone.body.setCircle(drone.width / 2);
 
         drone.spec = droneSpec;
         drone.state = 'descending';
@@ -3711,15 +3751,43 @@ class GameScene extends Phaser.Scene {
 
         drone.carryingGear = true;
         drone.state = 'carrying';
+        // 캐리 중엔 스프라이트 상하 반전 (머리가 아래로) → 머리 위 톱니가 보스 방향(위)로 보임
+        if (drone.setFlipY) drone.setFlipY(true);
         const gearColor = drone.spec.carriedGearColor ?? 0x888888;
         const gearR = drone.spec.carriedGearRadius ?? 8;
-        const visual = this.add.circle(drone.x, drone.y - (drone.spec.radius ?? 14) - 4, gearR, gearColor);
-        visual.setStrokeStyle(2, 0x555555);
+        const droneR = drone.spec.radius ?? 14;
+        // 이제 뒤집혔으니 "머리 위" = 화면상 y 감소 방향(원래대로 위쪽)
+        const visual = this.buildCarriedGearVisual(drone.x, drone.y - droneR - 4, gearR, gearColor);
         drone.carriedGearVisual = visual;
         drone.once('destroy', () => {
             if (visual && visual.active) visual.destroy();
         });
         bullet.destroy();
+    }
+
+    // 채취드론이 들고 다니는 톱니바퀴 시각: 원 + 사방 6톱니
+    buildCarriedGearVisual(x, y, gearR, gearColor) {
+        const g = this.add.graphics();
+        g.setPosition(x, y);
+        g.fillStyle(gearColor, 1);
+        g.lineStyle(1.5, 0x555555, 1);
+        const teeth = 6;
+        const toothLen = gearR * 0.55;
+        const halfArc = (Math.PI / teeth) * 0.55; // 각 톱니 밑변 반각
+        for (let i = 0; i < teeth; i += 1) {
+            const a = (i / teeth) * Math.PI * 2;
+            const ox = Math.cos(a) * (gearR + toothLen);
+            const oy = Math.sin(a) * (gearR + toothLen);
+            const p2x = Math.cos(a + halfArc) * gearR;
+            const p2y = Math.sin(a + halfArc) * gearR;
+            const p3x = Math.cos(a - halfArc) * gearR;
+            const p3y = Math.sin(a - halfArc) * gearR;
+            g.fillTriangle(ox, oy, p2x, p2y, p3x, p3y);
+            g.strokeTriangle(ox, oy, p2x, p2y, p3x, p3y);
+        }
+        g.fillCircle(0, 0, gearR);
+        g.strokeCircle(0, 0, gearR);
+        return g;
     }
 
     onHarvesterReachBoss(drone) {
@@ -3733,6 +3801,7 @@ class GameScene extends Phaser.Scene {
         }
         drone.carriedGearVisual = null;
         drone.carryingGear = false;
+        if (drone.setFlipY) drone.setFlipY(false); // 원상 복귀
         drone.state = 'descending';
         drone.wallSegment = null;
         drone.rotation2 = null;
