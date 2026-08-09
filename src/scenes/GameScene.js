@@ -43,6 +43,8 @@ class GameScene extends Phaser.Scene {
         this.suicideDroneSpawnLastTime = null;
         this.harvesterDronesGroup = this.physics.add.group();
         this.harvesterDroneSpawnerSpec = null;
+        // 시한지뢰: playerBullets가 아닌 별도 관리 (감속/트리거 로직 커스텀).
+        this.playerMines = [];
         // 두파팡 궤도체 캐리어(가상 중심점 + 3구체).
         this.doopaCores = [];
         // 두파팡 페이즈1: 천장 타원 궤도 5구체 + 랜덤 2개 수직 돌진.
@@ -570,6 +572,8 @@ class GameScene extends Phaser.Scene {
         this.updateSpiralOrbs(time, delta);
         this.updateDoopaGatheredOrbs(time, delta);
         this.updateHomingBullets(delta);
+        this.updatePlayerBoomerangs(time, delta);
+        this.updatePlayerMines(time, delta);
         this.updateSeekingMissiles(delta);
         this.updateEndpointDecelSpiral();
         this.updateTurretSpawner(time);
@@ -842,6 +846,218 @@ class GameScene extends Phaser.Scene {
             g.children.each((c) => consider(c));
         }
         return best ? { x: best.x, y: best.y } : null;
+    }
+
+    // 데미지 가능한 적 스프라이트 목록 (연쇄번개·광선·지뢰 판정용).
+    // getNearestEnemyTo 와 동일 집합. 반환은 sprite 배열.
+    getAllDamageableEnemies() {
+        const list = [];
+        const push = (o) => { if (o && o.active) list.push(o); };
+        if (this.boss && this.boss.sprite) push(this.boss.sprite);
+        if (this.raikou) push(this.raikou);
+        if (this.entei) push(this.entei);
+        for (const g of [this.turretsGroup, this.suicideDronesGroup, this.harvesterDronesGroup]) {
+            if (!g) continue;
+            g.children.each((c) => push(c));
+        }
+        return list;
+    }
+
+    // 특정 스프라이트에 데미지를 적용. 대상 유형별 분기. 무적 대상(target.invincible)은 스킵.
+    applyDamageToTarget(target, damage) {
+        if (!target || !target.active) return;
+        if (target.invincible) return;
+        if (this.boss && (target === this.boss.sprite || target === this.raikou || target === this.entei)) {
+            const mult = (target === this.boss.sprite) ? this.bossDamageMultiplier() : 1;
+            this.boss.onHit(damage * mult);
+            return;
+        }
+        // turret/drone: 그룹 소속이면 hp 필드 있음
+        if (typeof target.hp === 'number') {
+            target.hp -= damage;
+            if (target.hp <= 0 && target.destroy) target.destroy();
+        }
+    }
+
+    // ===== 부메랑 =====
+    // 위로 발사 → turnAroundY 도달 시 아래로 회귀 (더 빠른 속도). 오너 캐릭터가 잡으면 쿨타임 이득.
+    spawnPlayerBoomerang(x, y, w, owner) {
+        const b = this.add.rectangle(x, y, w.width, w.height, w.color);
+        this.physics.add.existing(b);
+        this.playerBullets.add(b);
+        b.setAlpha(0.45); // 위협 탄과 시각 구분 (기본 0.6보다 더 옅게)
+        b.body.setVelocityY(-w.bulletSpeed);
+        b.damage = w.damage;
+        b.pierce = w.pierce;
+        b.contactCooldownMs = w.contactCooldownMs ?? 200;
+        b.lastHitTargetTime = -Infinity;
+        b.isBoomerang = true;
+        b.boomerangPhase = 'out';
+        b.boomerangSpec = w;
+        b.boomerangOwner = owner;
+    }
+
+    updatePlayerBoomerangs(time) {
+        if (!this.playerBullets) return;
+        this.playerBullets.children.each((b) => {
+            if (!b || !b.active || !b.isBoomerang) return;
+            const w = b.boomerangSpec;
+            if (b.boomerangPhase === 'out') {
+                // 상단 도달 → 회귀 시작
+                if (b.y <= (w.turnAroundY ?? 40)) {
+                    b.boomerangPhase = 'return';
+                    b.body.setVelocityY(w.bulletSpeed * (w.returnSpeedMul ?? 1.5));
+                    b.damage = w.damage * (w.returnDamageMul ?? 1.5);
+                    b.lastHitTargetTime = -Infinity; // 같은 대상 재히트 허용
+                }
+            } else if (b.boomerangPhase === 'return') {
+                // 오너 캐릭터가 잡으면: 쿨타임 이득 + 소멸
+                const owner = b.boomerangOwner;
+                if (owner && owner.sprite && owner.sprite.active) {
+                    const dx = owner.sprite.x - b.x;
+                    const dy = owner.sprite.y - b.y;
+                    const r = (w.catchRadius ?? 24) + owner.size / 2;
+                    if (dx * dx + dy * dy <= r * r) {
+                        if (owner.onBoomerangCaught) {
+                            owner.onBoomerangCaught(w, w.catchCooldownReduceMs ?? 0);
+                        }
+                        b.destroy();
+                        return;
+                    }
+                }
+                // 화면 밖 벗어남 → 소멸
+                if (b.y > GameConfig.GAME_HEIGHT + 40) b.destroy();
+            }
+        });
+    }
+
+    // ===== 연쇄 번개 =====
+    // 첫 타겟은 최근접, 나머지는 랜덤. 각 타겟 위치에 즉시 판정용 판탄 스폰 + 사슬 라인 그래픽 페이드.
+    fireChainLightning(x, y, w) {
+        const enemies = this.getAllDamageableEnemies();
+        if (enemies.length === 0) return;
+        // 첫 타겟: 최근접
+        let firstIdx = 0;
+        let bestD2 = Infinity;
+        for (let i = 0; i < enemies.length; i += 1) {
+            const dx = enemies[i].x - x, dy = enemies[i].y - y;
+            const d2 = dx * dx + dy * dy;
+            if (d2 < bestD2) { bestD2 = d2; firstIdx = i; }
+        }
+        const chosen = [enemies[firstIdx]];
+        const remaining = enemies.filter((_, i) => i !== firstIdx);
+        // 나머지 shuffle
+        for (let i = remaining.length - 1; i > 0; i -= 1) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [remaining[i], remaining[j]] = [remaining[j], remaining[i]];
+        }
+        const need = Math.min((w.maxTargets ?? 5) - 1, remaining.length);
+        for (let i = 0; i < need; i += 1) chosen.push(remaining[i]);
+
+        // 각 타겟에 데미지 즉시 적용
+        for (const t of chosen) this.applyDamageToTarget(t, w.damage ?? 1);
+
+        // 사슬 라인 시각화
+        const g = this.add.graphics().setDepth(12);
+        g.lineStyle(w.linkWidth ?? 2, w.linkColor ?? 0xffee44, 1);
+        let px = x, py = y;
+        for (const t of chosen) {
+            g.lineBetween(px, py, t.x, t.y);
+            px = t.x; py = t.y;
+        }
+        this.tweens.add({
+            targets: g, alpha: 0,
+            duration: w.linkFadeMs ?? 220,
+            onComplete: () => g.destroy(),
+        });
+    }
+
+    // ===== 광선 판정 (Player.updateBeams 에서 호출) =====
+    // (bx, by) = 광선 시작점. 광선은 (bx, by) → (bx, 0) 세로 라인.
+    // 대상 반경(target body radius) 고려 → 광선 라인이 대상 원과 겹치면 히트.
+    // 반환: 히트한 타겟 수 (오버히트 누적 계산용).
+    beamApplyHits(bx, by, w) {
+        const enemies = this.getAllDamageableEnemies();
+        const halfW = w.hitWidth / 2;
+        let hits = 0;
+        for (const e of enemies) {
+            if (e.y > by) continue; // 캐릭터보다 아래는 광선 궤도 밖
+            if (e.y < 0) continue;
+            const eRadius = (e.body?.width ?? 40) / 2;
+            if (Math.abs(e.x - bx) > halfW + eRadius) continue;
+            this.applyDamageToTarget(e, w.damage);
+            hits += 1;
+        }
+        return hits;
+    }
+
+    // ===== 시한 지뢰 =====
+    // 상방 발사 → 감속 → 최소 속도 유지. mineTriggerY 도달 or 적 접촉 시 폭발 → 사방 미사일.
+    spawnPlayerMine(x, y, w) {
+        if (!this.playerMines) this.playerMines = [];
+        const r = w.mineRadius ?? 8;
+        const m = this.add.circle(x, y, r, w.color);
+        m.setStrokeStyle(2, w.mineStrokeColor ?? 0xff8844);
+        m.setAlpha(0.5); // 위협 탄과 시각 구분
+        this.physics.add.existing(m);
+        m.body.setCircle(r);
+        m.body.setVelocityY(-w.mineSpeed);
+        m.isMine = true;
+        m.mineSpec = w;
+        this.playerMines.push(m);
+    }
+
+    updatePlayerMines(time, delta) {
+        if (!this.playerMines || this.playerMines.length === 0) return;
+        const dt = delta / 1000;
+        const remaining = [];
+        for (const m of this.playerMines) {
+            if (!m || !m.active) continue;
+            const w = m.mineSpec;
+            // 감속 (velocityY += decel * dt), 단 최소 속도(위쪽 방향) 유지
+            const minVy = -(w.mineMinSpeed ?? 60);
+            const newVy = Math.min(m.body.velocity.y + (w.mineDecelPxPerSec ?? 500) * dt, minVy);
+            m.body.setVelocityY(newVy);
+            // 자동 트리거: Y 도달
+            let detonate = m.y <= (w.mineTriggerY ?? 140);
+            // 적 접촉 트리거
+            if (!detonate) {
+                const enemies = this.getAllDamageableEnemies();
+                const mr = w.mineRadius ?? 8;
+                for (const e of enemies) {
+                    const dx = e.x - m.x, dy = e.y - m.y;
+                    const er = ((e.body?.width ?? 40)) / 2;
+                    const rr = mr + er;
+                    if (dx * dx + dy * dy <= rr * rr) { detonate = true; break; }
+                }
+            }
+            if (detonate) this.detonateMine(m);
+            else remaining.push(m);
+        }
+        this.playerMines = remaining;
+    }
+
+    detonateMine(m) {
+        const w = m.mineSpec;
+        const n = w.explosionBullets ?? 8;
+        const speed = w.explosionBulletSpeed ?? 300;
+        const visR = w.explosionBulletRadius ?? 5;
+        const hitR = w.explosionBulletHitRadius ?? visR;
+        const dmg = w.explosionBulletDamage ?? 1;
+        for (let i = 0; i < n; i += 1) {
+            const angle = (i / n) * Math.PI * 2;
+            const b = this.add.circle(m.x, m.y, visR, w.color);
+            this.physics.add.existing(b);
+            // 판정 body가 시각보다 클 때 shape 중심 정렬: offset = visR - hitR
+            b.body.setCircle(hitR, visR - hitR, visR - hitR);
+            this.playerBullets.add(b);
+            b.body.setVelocity(Math.cos(angle) * speed, Math.sin(angle) * speed);
+            b.damage = dmg;
+            b.pierce = false;
+            b.contactCooldownMs = 0;
+            b.lastHitTargetTime = -Infinity;
+        }
+        m.destroy();
     }
 
     // 그룹의 add 메서드를 감싸서 stroke 없는 Shape에 붉은 아웃라인 적용.

@@ -30,7 +30,7 @@ const Weapons = {
         id: 'spread',
         name: '확산탄',
         type: 'spread',
-        intervalMs: 600,
+        intervalMs: 550,
         damage: 1,
         bulletSpeed: 480,
         pierce: false,
@@ -72,9 +72,79 @@ const Weapons = {
         missileSpeed: 380,
         missileSize: 6,
     },
+    boomerang: {
+        id: 'boomerang',
+        name: '부메랑탄',
+        type: 'boomerang',
+        intervalMs: 500,
+        damage: 1,
+        returnDamageMul: 1.5,       // 회귀 시 데미지 배율
+        bulletSpeed: 400,           // 상승 속도
+        returnSpeedMul: 1.5,        // 회귀 속도 배율 (600)
+        turnAroundY: 40,            // 이 Y 이하에 도달하면 회귀 시작
+        catchRadius: 24,            // 캐릭터 반경 + 여유
+        catchCooldownReduceMs: 200, // 잡으면 다음 발사 앞당김
+        pierce: true,               // 재히트는 contactCooldown 으로 관리 (턴 시 리셋)
+        contactCooldownMs: 200,
+        color: 0xff9944,
+        width: 8,
+        height: 20,
+    },
+    chain: {
+        id: 'chain',
+        name: '연쇄번개',
+        type: 'chain',
+        intervalMs: 780,
+        damage: 1,
+        maxTargets: 5,              // 첫 타겟(최근접) + 나머지 랜덤
+        linkColor: 0xffee44,
+        linkWidth: 2,
+        linkFadeMs: 220,
+        color: 0xffee44,
+    },
+    beam: {
+        id: 'beam',
+        name: '지속광선',
+        type: 'beam',
+        // 광선은 프레임 지속형. tick 마다 판정.
+        tickIntervalMs: 100,
+        damage: 0.7,                // 틱당 대상당 데미지 (순간 7 dps)
+        // 오버히트: 광선이 준 누적 데미지가 threshold 도달 시 offDurationMs 강제 오프.
+        overheatThreshold: 4,       // 4 데미지 누적 = ~5.7틱(571ms) 후 오프 → 500ms 오프 → 사이클 ~1.07s → 실효 3.73 dps
+        offDurationMs: 500,
+        // 시각 vs 판정 폭 분리 (시각이 더 굵음)
+        visualWidth: 14,
+        hitWidth: 8,
+        color: 0xff44ff,
+    },
+    mine: {
+        id: 'mine',
+        name: '시한지뢰',
+        type: 'mine',
+        intervalMs: 1200,
+        // 지뢰 자체 이동: 위로 발사 → 감속 → 최소 속도 유지 (제자리 근처 부유)
+        mineSpeed: 480,             // 초기 상승 속도
+        mineDecelPxPerSec: 500,     // 감속률 (velocityY += decel * dt)
+        mineMinSpeed: 60,           // 최소 상승 속도 (이 이하로는 안 느려짐)
+        mineTriggerY: 140,          // 이 Y 이하 도달 시 자동 폭발
+        mineRadius: 8,
+        mineStrokeColor: 0xff8844,
+        // 폭발 시 사방으로 미사일 N발 발사
+        explosionBullets: 8,
+        explosionBulletSpeed: 300,
+        explosionBulletRadius: 5,      // 시각 반경
+        // 판정 반경(18)을 시각과 분리. 접촉 폭발 시 지뢰 중심이 보스 body 바깥 (mine_r 8 + 첫 프레임 이동 ~5)px 지점이라
+        // 반경 13 이상이어야 아래로 튀는 파편도 프레임 0에 걸림. 여유 두고 18.
+        explosionBulletHitRadius: 18,
+        explosionBulletDamage: 1,
+        color: 0xaacc44,
+    },
 };
 
-const BASIC_WEAPON_IDS = ['basicLinear', 'piercing', 'spread', 'homing', 'orbit'];
+const BASIC_WEAPON_IDS = [
+    'basicLinear', 'piercing', 'spread', 'homing', 'orbit',
+    'boomerang', 'chain', 'beam', 'mine',
+];
 const MAX_WEAPON_LEVEL = 5;
 
 // 각 무기 레벨업 시 오르는 스탯 한 줄 요약. LoadoutScene 미리보기 밑에 표시.
@@ -84,6 +154,10 @@ const WEAPON_LEVEL_UP_DESCRIPTIONS = {
     spread: '탄수 +1 (2Lv마다), 데미지 +7.5%/Lv',
     homing: '데미지 +15%/Lv',
     orbit: '궤도수 +1 (2Lv마다), 데미지 +7.5%/Lv',
+    boomerang: '(레벨업 미정)',
+    chain: '(레벨업 미정)',
+    beam: '(레벨업 미정)',
+    mine: '(레벨업 미정)',
 };
 
 function getWeaponLevelUpDescription(id) {

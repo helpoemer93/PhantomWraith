@@ -9,6 +9,7 @@ const Storage = {
             if (!data || !data.weaponLevels || !data.loadout || !data.bossProgress) return null;
             if (typeof data.crystals !== 'number') data.crystals = 0;
             if (!data.upgrades) data.upgrades = makeInitialUpgrades();
+            if (typeof data.loadout.mirror !== 'boolean') data.loadout.mirror = true;
             return data;
         } catch (e) {
             return null;
@@ -46,6 +47,7 @@ function makeInitialSaveData() {
         loadout: {
             p1: ['basicLinear', null, null, null],
             p2: ['basicLinear', null, null, null],
+            mirror: true,
         },
         bossProgress: {},
         crystals: 0,

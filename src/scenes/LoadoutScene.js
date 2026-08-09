@@ -11,8 +11,8 @@ class LoadoutScene extends Phaser.Scene {
         this.weaponLevels = this.registry.get('weaponLevels') || {};
         const raw = this.registry.get('loadout');
         this.loadout = raw
-            ? { p1: raw.p1.slice(), p2: raw.p2.slice() }
-            : { p1: [null, null, null, null], p2: [null, null, null, null] };
+            ? { p1: raw.p1.slice(), p2: raw.p2.slice(), mirror: raw.mirror ?? true }
+            : { p1: [null, null, null, null], p2: [null, null, null, null], mirror: true };
 
         this.cursorIndex = 0;
 
@@ -20,14 +20,24 @@ class LoadoutScene extends Phaser.Scene {
             fontSize: '22px', color: '#ffee88',
         }).setOrigin(0.5);
 
+        this.mirrorBtnBg = this.add.rectangle(GameConfig.GAME_WIDTH - 90, 30, 160, 22, 0x334455)
+            .setStrokeStyle(1, 0x88ccff)
+            .setInteractive({ useHandCursor: true });
+        this.mirrorBtnText = this.add.text(GameConfig.GAME_WIDTH - 90, 30, '', {
+            fontSize: '11px', color: '#ffffff',
+        }).setOrigin(0.5);
+        this.mirrorBtnBg.on('pointerdown', () => this.toggleMirror());
+
         this.add.text(20, 80, '1P', {
             fontSize: '14px', color: '#ff4466',
         });
+        this.buildClearButton(GameConfig.GAME_WIDTH - 90, 80, 'p1');
         this.p1SlotUI = this.buildSlotRow(115, 'p1');
 
         this.add.text(20, 165, '2P', {
             fontSize: '14px', color: '#4488ff',
         });
+        this.buildClearButton(GameConfig.GAME_WIDTH - 90, 165, 'p2');
         this.p2SlotUI = this.buildSlotRow(200, 'p2');
 
         this.add.text(20, 245, '무기 (캐릭터별 중복 불가, p1·p2 서로는 가능)', {
@@ -64,6 +74,23 @@ class LoadoutScene extends Phaser.Scene {
         this.keyMenu = this.input.keyboard.addKey(KC.ESC);
 
         this.refresh();
+    }
+
+    buildClearButton(x, y, char) {
+        const bg = this.add.rectangle(x, y, 78, 18, 0x442233)
+            .setStrokeStyle(1, 0x885566)
+            .setOrigin(0, 0.5)
+            .setInteractive({ useHandCursor: true });
+        const text = this.add.text(x + 39, y, '전체 비우기', {
+            fontSize: '10px', color: '#ffaabb',
+        }).setOrigin(0.5);
+        bg.on('pointerdown', () => {
+            this.clearAll(char);
+            this.refresh();
+        });
+        bg.on('pointerover', () => bg.setStrokeStyle(2, 0xff88aa));
+        bg.on('pointerout', () => bg.setStrokeStyle(1, 0x885566));
+        return { bg, text };
     }
 
     buildSlotRow(y, char) {
@@ -127,42 +154,57 @@ class LoadoutScene extends Phaser.Scene {
         return positions;
     }
 
+    targetsFor(char) {
+        return this.loadout.mirror ? ['p1', 'p2'] : [char];
+    }
+
     placeTo(wid, char) {
-        const arr = this.loadout[char];
-        if (arr.includes(wid)) return false;
-        for (let i = 0; i < arr.length; i += 1) {
-            if (arr[i] == null) {
-                arr[i] = wid;
-                return true;
+        let changed = false;
+        for (const c of this.targetsFor(char)) {
+            const arr = this.loadout[c];
+            if (arr.includes(wid)) continue;
+            for (let i = 0; i < arr.length; i += 1) {
+                if (arr[i] == null) {
+                    arr[i] = wid;
+                    changed = true;
+                    break;
+                }
             }
         }
-        return false;
+        return changed;
     }
 
     placeToSpecificSlot(wid, char, slotIndex) {
-        const arr = this.loadout[char];
-        if (arr[slotIndex] === wid) return false;
-        for (let i = 0; i < arr.length; i += 1) {
-            if (i !== slotIndex && arr[i] === wid) return false;
+        let changed = false;
+        for (const c of this.targetsFor(char)) {
+            const arr = this.loadout[c];
+            if (arr[slotIndex] === wid) continue;
+            for (let i = 0; i < arr.length; i += 1) {
+                if (i !== slotIndex && arr[i] === wid) arr[i] = null;
+            }
+            arr[slotIndex] = wid;
+            changed = true;
         }
-        arr[slotIndex] = wid;
-        return true;
+        return changed;
     }
 
-    unequipSlot(char, slotIndex) {
-        const arr = this.loadout[char];
-        if (!arr[slotIndex]) return false;
-        arr[slotIndex] = null;
-        return true;
+    clearAll(char) {
+        for (const c of this.targetsFor(char)) {
+            const arr = this.loadout[c];
+            for (let i = 0; i < arr.length; i += 1) arr[i] = null;
+        }
     }
 
     onSlotClick(char, slotIndex) {
-        const arr = this.loadout[char];
-        if (arr[slotIndex]) {
-            this.unequipSlot(char, slotIndex);
-        } else {
-            const wid = BASIC_WEAPON_IDS[this.cursorIndex];
-            this.placeToSpecificSlot(wid, char, slotIndex);
+        const wid = BASIC_WEAPON_IDS[this.cursorIndex];
+        this.placeToSpecificSlot(wid, char, slotIndex);
+        this.refresh();
+    }
+
+    toggleMirror() {
+        this.loadout.mirror = !this.loadout.mirror;
+        if (this.loadout.mirror) {
+            this.loadout.p2 = this.loadout.p1.slice();
         }
         this.refresh();
     }
@@ -229,6 +271,13 @@ class LoadoutScene extends Phaser.Scene {
     }
 
     refresh() {
+        if (this.mirrorBtnText) {
+            const on = this.loadout.mirror;
+            this.mirrorBtnText.setText(`1P·2P 동시 편집: ${on ? 'ON' : 'OFF'}`);
+            this.mirrorBtnBg.setFillStyle(on ? 0x224477 : 0x333344);
+            this.mirrorBtnBg.setStrokeStyle(1, on ? 0x88ccff : 0x666677);
+        }
+
         for (let i = 0; i < 4; i += 1) {
             this.updateSlotUI(this.p1SlotUI[i], this.loadout.p1[i]);
             this.updateSlotUI(this.p2SlotUI[i], this.loadout.p2[i]);

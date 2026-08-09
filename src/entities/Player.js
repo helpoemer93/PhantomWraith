@@ -142,6 +142,7 @@ class Player {
                 const w = this.slots[i];
                 if (!w) continue;
                 if (w.type === 'orbit') continue;
+                if (w.type === 'beam') continue; // 광선은 update loop에서 자체 처리
                 if (time - this.lastFireTime[i] < w.intervalMs) continue;
                 this.fireWeapon(w);
                 this.lastFireTime[i] = time;
@@ -149,6 +150,7 @@ class Player {
         }
 
         this.updateOrbits(time);
+        this.updateBeams(time);
     }
 
     updateOrbits(time) {
@@ -198,7 +200,83 @@ class Player {
             }
         } else if (w.type === 'homing') {
             this.scene.spawnPlayerHomingBullet(x, y, w);
+        } else if (w.type === 'boomerang') {
+            this.scene.spawnPlayerBoomerang(x, y, w, this);
+        } else if (w.type === 'chain') {
+            this.scene.fireChainLightning(x, y, w);
+        } else if (w.type === 'mine') {
+            this.scene.spawnPlayerMine(x, y, w);
         }
+    }
+
+    // 캐릭터가 회귀 부메랑을 잡으면 다음 발사 앞당김 (rewardMs 만큼 lastFireTime을 뒤로).
+    onBoomerangCaught(weaponSpec, rewardMs) {
+        for (let i = 0; i < this.slots.length; i += 1) {
+            if (this.slots[i] === weaponSpec) {
+                this.lastFireTime[i] -= rewardMs;
+                return;
+            }
+        }
+    }
+
+    // 광선: canFire 상태에서 자체 tick 판정. 오버히트 도달 시 강제 오프.
+    updateBeams(time) {
+        if (!this.beamStates) this.beamStates = [];
+        for (let i = 0; i < this.slots.length; i += 1) {
+            const w = this.slots[i];
+            if (!w || w.type !== 'beam') {
+                // 슬롯이 광선이 아니면 상태 정리
+                if (this.beamStates[i]?.graphics) {
+                    this.beamStates[i].graphics.destroy();
+                    this.beamStates[i] = null;
+                }
+                continue;
+            }
+            if (!this.beamStates[i]) {
+                this.beamStates[i] = { offUntil: 0, damageAccum: 0, lastTickTime: 0, graphics: null };
+            }
+            const bs = this.beamStates[i];
+
+            const canRender = this.canFire && time >= bs.offUntil;
+            if (!canRender) {
+                if (bs.graphics) { bs.graphics.destroy(); bs.graphics = null; }
+                continue;
+            }
+
+            const bx = this.sprite.x;
+            const by = this.sprite.y - this.size / 2;
+            if (!bs.graphics) bs.graphics = this.scene.add.graphics().setDepth(12);
+            bs.graphics.clear();
+            // 3층 구성: 외곽 옅은 글로우 + 중간 반투명 + 코어 진한 라인
+            bs.graphics.fillStyle(w.color, 0.2);
+            bs.graphics.fillRect(bx - w.visualWidth, 0, w.visualWidth * 2, by);
+            bs.graphics.fillStyle(w.color, 0.5);
+            bs.graphics.fillRect(bx - w.visualWidth / 2, 0, w.visualWidth, by);
+            bs.graphics.fillStyle(0xffffff, 0.9);
+            bs.graphics.fillRect(bx - w.hitWidth / 2, 0, w.hitWidth, by);
+
+            if (time - bs.lastTickTime >= w.tickIntervalMs) {
+                bs.lastTickTime = time;
+                const hits = this.scene.beamApplyHits ? this.scene.beamApplyHits(bx, by, w) : 0;
+                if (hits > 0) {
+                    bs.damageAccum += w.damage * hits;
+                    if (bs.damageAccum >= w.overheatThreshold) {
+                        bs.damageAccum = 0;
+                        bs.offUntil = time + w.offDurationMs;
+                        if (bs.graphics) { bs.graphics.destroy(); bs.graphics = null; }
+                    }
+                }
+            }
+        }
+    }
+
+    // 씬 리셋/캐릭터 소멸 시 광선 그래픽 정리
+    destroyBeams() {
+        if (!this.beamStates) return;
+        for (const bs of this.beamStates) {
+            if (bs?.graphics) bs.graphics.destroy();
+        }
+        this.beamStates = [];
     }
 
     setInvincible(v) {

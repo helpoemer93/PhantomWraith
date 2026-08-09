@@ -137,7 +137,14 @@ class WeaponPreview {
             }
         } else if (w.type === 'homing') {
             this.spawnHomingBullet(px, py, w, speed);
+        } else if (w.type === 'boomerang') {
+            // 프리뷰: 그냥 위로 발사되는 사각탄으로 렌더 (회귀는 시각화 안 함)
+            this.spawnRectBullet(px, py, 0, -speed, w, false);
+        } else if (w.type === 'mine') {
+            // 프리뷰: 지뢰 상승만 렌더
+            this.spawnRectBullet(px, py, 0, -speed * 0.5, w, false);
         }
+        // chain / beam: 프리뷰 생략 (로드아웃에서 색·이름만 확인)
     }
 
     spawnRectBullet(x, y, vx, vy, w, homing) {
