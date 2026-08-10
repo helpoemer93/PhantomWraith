@@ -3029,6 +3029,7 @@ class GameScene extends Phaser.Scene {
         const activePos = this.getActivePlayerPos();
         if (activePos) {
             this.spawnGear(bx, by, activePos.x, activePos.y, cfg.gear);
+            AudioSettings.playSfx(this, 'metagross-gear-fire', { volume: 0.15 });
         }
     }
 
@@ -3378,6 +3379,12 @@ class GameScene extends Phaser.Scene {
             turret.x, turret.y, vx, vy,
             spec.radius ?? 4, spec.color ?? 0xff8844
         );
+        // 다수 포탑 동시 발사 시 노이즈 방지: 전역 쿨다운 200ms (최대 ~2발 오버랩).
+        const now = this.time.now;
+        if (!this._turretShotSfxNextAt || now >= this._turretShotSfxNextAt) {
+            AudioSettings.playSfx(this, 'metagross-turret-shot', { volume: 0.15 });
+            this._turretShotSfxNextAt = now + 200;
+        }
     }
 
     onTurretHit(turret, bullet) {
@@ -3414,6 +3421,15 @@ class GameScene extends Phaser.Scene {
         const w = fieldSpec.width ?? GameConfig.GAME_WIDTH;
         const h = fieldSpec.height ?? 22;
         const y0 = fieldSpec.initialY ?? -20;
+        // 인터루드 사운드는 필드가 화면 바닥으로 내려가 destroy될 때까지 loop 재생.
+        if (this.cache.audio.exists('metagross-interlude')
+            && (typeof document === 'undefined' || document.hasFocus())) {
+            const factor = AudioSettings.load().sfx;
+            const snd = this.sound.add('metagross-interlude', { loop: true, volume: 0.25 * factor });
+            snd.play();
+            // field 아래에서 사용하기 위해 지역 변수, once destroy에서 참조.
+            this._pendingInterludeSnd = snd;
+        }
         const field = this.add.rectangle(
             GameConfig.GAME_WIDTH / 2, y0, w, h,
             fieldSpec.color ?? 0x88ccff
@@ -3424,6 +3440,15 @@ class GameScene extends Phaser.Scene {
         field.body.setSize(w, h);
         field.body.setVelocityY(fieldSpec.speed ?? 235);
         field.isElectricField = true;
+        // 사운드 loop 정지: 필드가 화면 밖으로 나가 destroy될 때
+        if (this._pendingInterludeSnd) {
+            const snd = this._pendingInterludeSnd;
+            this._pendingInterludeSnd = null;
+            field.once('destroy', () => {
+                if (snd.isPlaying) snd.stop();
+                snd.destroy();
+            });
+        }
     }
 
     startSuicideDroneSpawner(spec) {
@@ -3459,6 +3484,7 @@ class GameScene extends Phaser.Scene {
         const targetY = cy + Math.sin(initPhi) * R;
 
         const droneR = droneSpec.radius ?? 15;
+        AudioSettings.playSfx(this, 'metagross-drone-spawn', { volume: 0.2 });
         const useSprite = droneSpec.spriteKey && this.textures.exists(droneSpec.spriteKey);
         let drone;
         if (useSprite) {
@@ -3577,6 +3603,7 @@ class GameScene extends Phaser.Scene {
                         d.chargeVx = Math.cos(angle) * d.chargeSpeed;
                         d.chargeVy = Math.sin(angle) * d.chargeSpeed;
                         d.body.setVelocity(0, 0);
+                        AudioSettings.playSfx(this, 'metagross-chaser-alert', { volume: 0.2 });
                         break;
                     }
                 }
@@ -3618,6 +3645,7 @@ class GameScene extends Phaser.Scene {
                         d.chargeVx = Math.cos(angle) * d.chargeSpeed;
                         d.chargeVy = Math.sin(angle) * d.chargeSpeed;
                         d.body.setVelocity(0, 0);
+                        AudioSettings.playSfx(this, 'metagross-chaser-alert', { volume: 0.2 });
                         break;
                     }
                 }
@@ -3691,6 +3719,7 @@ class GameScene extends Phaser.Scene {
 
     spawnHarvesterDrone(x, y, droneSpec) {
         const radius = droneSpec.radius ?? 14;
+        AudioSettings.playSfx(this, 'metagross-drone-spawn', { volume: 0.2 });
         const useSprite = droneSpec.spriteKey && this.textures.exists(droneSpec.spriteKey);
         let drone;
         if (useSprite) {
@@ -3887,6 +3916,7 @@ class GameScene extends Phaser.Scene {
         const heal = this.boss.maxHp * (drone.healPercent / 100);
         this.boss.hp = Math.min(this.boss.maxHp, this.boss.hp + heal);
         this.updateHpBar();
+        this.spawnHealVfx(drone.healPercent);
         if (drone.carriedGearVisual && drone.carriedGearVisual.active) {
             drone.carriedGearVisual.destroy();
         }
@@ -3896,6 +3926,49 @@ class GameScene extends Phaser.Scene {
         drone.wallSegment = null;
         drone.rotation2 = null;
         drone.body.setVelocity(0, drone.moveSpeed);
+    }
+
+    // 채취드론 회복 성공 시각 이펙트: 보스 초록 링 pulse + "+N%" floating 텍스트
+    spawnHealVfx(healPercent) {
+        if (!this.boss?.sprite) return;
+        const bx = this.boss.sprite.x;
+        const by = this.boss.sprite.y;
+        const bossHalf = (this.boss.data?.size ?? 70) / 2;
+        const startR = bossHalf * 0.9;
+        const endR = bossHalf * 1.8;
+        const color = 0x66ff88;
+
+        // 링 pulse (scale 트윈으로 확장. Phaser Arc의 radius 직접 트윈은 geometry 갱신 안 될 수 있음)
+        const ring = this.add.circle(bx, by, startR);
+        ring.setStrokeStyle(3, color, 0.9);
+        ring.setDepth(30);
+        const targetScale = endR / startR;
+        this.tweens.add({
+            targets: ring,
+            scaleX: targetScale,
+            scaleY: targetScale,
+            alpha: 0,
+            duration: 450,
+            ease: 'Cubic.easeOut',
+            onComplete: () => ring.destroy(),
+        });
+
+        // Floating "+N%" 텍스트
+        const text = this.add.text(bx, by - bossHalf - 6, `+${healPercent}%`, {
+            fontFamily: 'neodgm, sans-serif',
+            fontSize: '18px',
+            color: '#66ff88',
+            stroke: '#003311',
+            strokeThickness: 3,
+        }).setOrigin(0.5, 1).setDepth(31);
+        this.tweens.add({
+            targets: text,
+            y: text.y - 24,
+            alpha: 0,
+            duration: 650,
+            ease: 'Cubic.easeOut',
+            onComplete: () => text.destroy(),
+        });
     }
 
     onHarvesterHitPlayer(player, drone) {

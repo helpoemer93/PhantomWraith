@@ -19,6 +19,11 @@ class BootScene extends Phaser.Scene {
         this.load.audio('freezer-p3-blade', 'Sound/freezer-p3-blade.mp3');
         this.load.audio('freezer-p3-derive', 'Sound/freezer-p3-derive.mp3');
         this.load.audio('metagross-bgm', 'Sound/metagross-bgm.mp3');
+        this.load.audio('metagross-gear-fire', 'Sound/metagross-gear-fire.mp3');
+        this.load.audio('metagross-turret-shot', 'Sound/metagross-turret-shot.mp3');
+        this.load.audio('metagross-drone-spawn', 'Sound/metagross-drone-spawn.mp3');
+        this.load.audio('metagross-chaser-alert', 'Sound/metagross-chaser-alert.mp3');
+        this.load.audio('metagross-interlude', 'Sound/metagross-interlude.mp3');
         this.load.audio('suicune-bgm', 'Sound/suicune-bgm.mp3');
         this.load.audio('doopapang-bgm', 'Sound/Nebula Ascension.mp3');
         this.load.audio('suicune-wave', 'Sound/스이쿤파도.mp3');
