@@ -30,7 +30,7 @@ const MetagrossData = {
                 intervalMs: 5000,
                 area: { xMin: 60, xMax: 420, yMin: 180, yMax: 380 },
                 turret: {
-                    radius: 12,
+                    radius: 16,
                     color: 0x999999,
                     strokeColor: 0x666666,
                     spriteKey: 'metagross-turret',
@@ -53,7 +53,7 @@ const MetagrossData = {
             suicideDroneSpawner: {
                 intervalMs: 4000,
                 drone: {
-                    radius: 15,
+                    radius: 19,
                     color: 0x666666,
                     strokeColor: 0x333333,
                     spriteKey: 'metagross-chaser',
@@ -75,7 +75,7 @@ const MetagrossData = {
             harvesterDroneSpawner: {
                 cyclesPerSpawn: 3,
                 drone: {
-                    radius: 14,
+                    radius: 18,
                     color: 0xccaa44,
                     strokeColor: 0x664422,
                     spriteKey: 'metagross-harvester',

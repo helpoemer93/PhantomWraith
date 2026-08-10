@@ -97,7 +97,7 @@ const Weapons = {
         intervalMs: 975,
         damage: 1,
         damageFalloffPerBounce: 0.10,  // 튕길 때마다 데미지 -10% (1st=1.0, 2nd=0.9, 3rd=0.81…)
-        maxTargets: 5,              // 첫 타겟(최근접) + 나머지 랜덤
+        maxTargets: 3,              // 첫 타겟(최근접) + 나머지 랜덤
         linkColor: 0xffee44,
         linkWidth: 2,
         linkFadeMs: 220,

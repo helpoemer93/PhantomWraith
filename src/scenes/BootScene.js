@@ -71,9 +71,11 @@ class BootScene extends Phaser.Scene {
 
         // 메타그로스 관련 강철 포켓몬 스프라이트 (프로젝트 루트에 위치)
         this.load.image('metagross-gear', '기어르.png');
-        this.load.image('metagross-harvester', '메탕구탑뷰.png');
-        this.load.image('metagross-chaser', '코일탑뷰.png');
-        this.load.image('metagross-turret', '쏘콘탑뷰.png');
+        // 포탑·드론은 idle/방향별 애니메이션 스프라이트 시트
+        this.load.spritesheet('metagross-turret', 'metagross-turret-sprite-4f.png', { frameWidth: 32, frameHeight: 32 });
+        this.load.spritesheet('metagross-invincible', 'metagross-invincible-sprite-4f.png', { frameWidth: 32, frameHeight: 32 });
+        this.load.spritesheet('metagross-chaser', 'metagross-chaser-sprite-32f.png', { frameWidth: 24, frameHeight: 24 });
+        this.load.spritesheet('metagross-harvester', 'metagross-harvester-sprite-64f.png', { frameWidth: 40, frameHeight: 40 });
     }
 
     create() {

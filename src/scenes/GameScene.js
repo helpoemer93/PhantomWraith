@@ -3206,16 +3206,73 @@ class GameScene extends Phaser.Scene {
         this.spawnTurret(x, y, turretSpec);
     }
 
-    spawnTurret(x, y, turretSpec) {
+    // 메타그로스 서브 유닛(포탑·드론) 애니메이션 lazy 등록. 최초 spawn 시 1회.
+    ensureMetagrossAnims() {
+        if (this._metagrossAnimsReady) return;
+        const A = this.anims;
+        // 포탑·무적포탑: 4프레임 idle (breathing)
+        if (this.textures.exists('metagross-turret') && !A.exists('metagross-turret-idle')) {
+            A.create({ key: 'metagross-turret-idle',
+                frames: A.generateFrameNumbers('metagross-turret', { start: 0, end: 3 }),
+                frameRate: 4, repeat: -1 });
+        }
+        if (this.textures.exists('metagross-invincible') && !A.exists('metagross-invincible-idle')) {
+            A.create({ key: 'metagross-invincible-idle',
+                frames: A.generateFrameNumbers('metagross-invincible', { start: 0, end: 3 }),
+                frameRate: 4, repeat: -1 });
+        }
+        // 코일(추격드론) 8방향 × 4프레임
+        if (this.textures.exists('metagross-chaser') && !A.exists('metagross-chaser-dir-0')) {
+            for (let d = 0; d < 8; d += 1) {
+                A.create({ key: `metagross-chaser-dir-${d}`,
+                    frames: A.generateFrameNumbers('metagross-chaser', { start: d * 4, end: d * 4 + 3 }),
+                    frameRate: 8, repeat: -1 });
+            }
+        }
+        // 메탕구(채취드론) 8방향 × 8프레임
+        if (this.textures.exists('metagross-harvester') && !A.exists('metagross-harvester-dir-0')) {
+            for (let d = 0; d < 8; d += 1) {
+                A.create({ key: `metagross-harvester-dir-${d}`,
+                    frames: A.generateFrameNumbers('metagross-harvester', { start: d * 8, end: d * 8 + 7 }),
+                    frameRate: 10, repeat: -1 });
+            }
+        }
+        this._metagrossAnimsReady = true;
+    }
+
+    // (vx, vy) 벡터 방향 → 8방향 인덱스 (시트 순서: 0=down, 1=down-right, ..., 7=down-left, 반시계)
+    angleToDir8(vx, vy) {
+        const angle = Math.atan2(vy, vx); // -PI..PI (right=0, down=PI/2)
+        const idx = Math.round((Math.PI / 2 - angle) / (Math.PI / 4));
+        return ((idx % 8) + 8) % 8;
+    }
+
+    // 방향 변경 시 현재 프레임 인덱스 유지하며 anim 스위칭 (뚝뚝 리셋 방지).
+    playDirAnim(sprite, animKey) {
+        if (sprite.anims.currentAnim?.key === animKey) return;
+        const prevIdx = sprite.anims.currentFrame ? sprite.anims.currentFrame.index - 1 : 0;
+        const newAnim = this.anims.get(animKey);
+        if (!newAnim) { sprite.play(animKey); return; }
+        const startFrame = Math.min(Math.max(prevIdx, 0), newAnim.frames.length - 1);
+        sprite.play({ key: animKey, startFrame });
+    }
+
+    spawnTurret(x, y, turretSpec, isInvincible = false) {
         const radius = turretSpec.radius ?? 12;
-        const useSprite = turretSpec.spriteKey && this.textures.exists(turretSpec.spriteKey);
+        const spriteKey = isInvincible ? 'metagross-invincible' : turretSpec.spriteKey;
+        const useSprite = spriteKey && this.textures.exists(spriteKey);
         let t;
         if (useSprite) {
-            t = this.add.sprite(x, y, turretSpec.spriteKey);
+            this.ensureMetagrossAnims();
+            t = this.add.sprite(x, y, spriteKey);
             t.setDisplaySize(radius * 2, radius * 2);
+            const animKey = isInvincible ? 'metagross-invincible-idle' : 'metagross-turret-idle';
+            if (this.anims.exists(animKey)) t.play(animKey);
         } else {
-            t = this.add.circle(x, y, radius, turretSpec.color ?? 0x999999);
-            t.setStrokeStyle(2, turretSpec.strokeColor ?? 0x666666);
+            const color = isInvincible ? (turretSpec.color ?? 0xccccdd) : (turretSpec.color ?? 0x999999);
+            const stroke = isInvincible ? (turretSpec.strokeColor ?? 0x4488ff) : (turretSpec.strokeColor ?? 0x666666);
+            t = this.add.circle(x, y, radius, color);
+            t.setStrokeStyle(isInvincible ? 3 : 2, stroke);
         }
         this.physics.add.existing(t);
         this.turretsGroup.add(t);
@@ -3405,8 +3462,16 @@ class GameScene extends Phaser.Scene {
         const useSprite = droneSpec.spriteKey && this.textures.exists(droneSpec.spriteKey);
         let drone;
         if (useSprite) {
+            this.ensureMetagrossAnims();
             drone = this.add.sprite(startX, startY, droneSpec.spriteKey);
             drone.setDisplaySize(droneR * 2, droneR * 2);
+            // 초기 방향 = approach 벡터. anim 진입 후 매 프레임 방향 갱신.
+            const initDx = targetX - startX;
+            const initDy = targetY - startY;
+            const dir = this.angleToDir8(initDx, initDy);
+            const key = `metagross-chaser-dir-${dir}`;
+            if (this.anims.exists(key)) drone.play(key);
+            drone.usesDirAnim = true;
         } else {
             drone = this.add.circle(startX, startY, droneR, droneSpec.color ?? 0x666666);
             drone.setStrokeStyle(2, droneSpec.strokeColor ?? 0x333333);
@@ -3483,7 +3548,11 @@ class GameScene extends Phaser.Scene {
                     return;
                 }
                 const moveAngle = Math.atan2(dy, dx);
-                d.rotation = moveAngle - Math.PI / 2; // 스프라이트 기본 방향이 아래(-PI/2 보정)
+                if (d.usesDirAnim) {
+                    this.playDirAnim(d, `metagross-chaser-dir-${this.angleToDir8(dx, dy)}`);
+                } else {
+                    d.rotation = moveAngle - Math.PI / 2; // circle 폴백은 회전으로 방향 표시
+                }
                 d.fan.x = d.x;
                 d.fan.y = d.y;
                 d.fan.rotation = moveAngle;
@@ -3518,7 +3587,13 @@ class GameScene extends Phaser.Scene {
                 d.body.setVelocity(0, 0);
 
                 const tangentAngle = d.phi + Math.PI / 2;
-                d.rotation = tangentAngle - Math.PI / 2;
+                if (d.usesDirAnim) {
+                    const tvx = Math.cos(tangentAngle);
+                    const tvy = Math.sin(tangentAngle);
+                    this.playDirAnim(d, `metagross-chaser-dir-${this.angleToDir8(tvx, tvy)}`);
+                } else {
+                    d.rotation = tangentAngle - Math.PI / 2;
+                }
                 d.fan.x = d.x;
                 d.fan.y = d.y;
                 d.fan.rotation = tangentAngle;
@@ -3547,7 +3622,11 @@ class GameScene extends Phaser.Scene {
                     }
                 }
             } else if (d.state === 'paused') {
-                d.rotation = Math.atan2(d.chargeVy, d.chargeVx) - Math.PI / 2;
+                if (d.usesDirAnim) {
+                    this.playDirAnim(d, `metagross-chaser-dir-${this.angleToDir8(d.chargeVx, d.chargeVy)}`);
+                } else {
+                    d.rotation = Math.atan2(d.chargeVy, d.chargeVx) - Math.PI / 2;
+                }
                 d.fan.x = d.x;
                 d.fan.y = d.y;
                 d.fan.setFillStyle(d.spec.fanColor ?? 0xff4444, d.spec.fanAlphaPaused ?? 0.7);
@@ -3615,8 +3694,13 @@ class GameScene extends Phaser.Scene {
         const useSprite = droneSpec.spriteKey && this.textures.exists(droneSpec.spriteKey);
         let drone;
         if (useSprite) {
+            this.ensureMetagrossAnims();
             drone = this.add.sprite(x, y, droneSpec.spriteKey);
             drone.setDisplaySize(radius * 2, radius * 2);
+            // 최초 상태 = descending (아래로 이동), dir=0
+            const key = 'metagross-harvester-dir-0';
+            if (this.anims.exists(key)) drone.play(key);
+            drone.usesDirAnim = true;
         } else {
             drone = this.add.circle(x, y, radius, droneSpec.color ?? 0xccaa44);
             drone.setStrokeStyle(2, droneSpec.strokeColor ?? 0x664422);
@@ -3721,6 +3805,14 @@ class GameScene extends Phaser.Scene {
                 }
             }
 
+            if (d.usesDirAnim && d.body) {
+                const vx = d.body.velocity.x;
+                const vy = d.body.velocity.y;
+                if (Math.hypot(vx, vy) > 1) {
+                    this.playDirAnim(d, `metagross-harvester-dir-${this.angleToDir8(vx, vy)}`);
+                }
+            }
+
             if (d.carriedGearVisual && d.carriedGearVisual.active) {
                 d.carriedGearVisual.x = d.x;
                 d.carriedGearVisual.y = d.y - (d.spec.radius ?? 14) - 4;
@@ -3751,12 +3843,11 @@ class GameScene extends Phaser.Scene {
 
         drone.carryingGear = true;
         drone.state = 'carrying';
-        // 캐리 중엔 스프라이트 상하 반전 (머리가 아래로) → 머리 위 톱니가 보스 방향(위)로 보임
-        if (drone.setFlipY) drone.setFlipY(true);
+        // 8방향 anim이 이동 방향에 맞춰 스프라이트를 자연스럽게 돌려주므로 flip 불필요.
         const gearColor = drone.spec.carriedGearColor ?? 0x888888;
         const gearR = drone.spec.carriedGearRadius ?? 8;
         const droneR = drone.spec.radius ?? 14;
-        // 이제 뒤집혔으니 "머리 위" = 화면상 y 감소 방향(원래대로 위쪽)
+        // 캐리 톱니는 항상 드론 위쪽에 표시 (보스 방향)
         const visual = this.buildCarriedGearVisual(drone.x, drone.y - droneR - 4, gearR, gearColor);
         drone.carriedGearVisual = visual;
         drone.once('destroy', () => {
@@ -3801,7 +3892,6 @@ class GameScene extends Phaser.Scene {
         }
         drone.carriedGearVisual = null;
         drone.carryingGear = false;
-        if (drone.setFlipY) drone.setFlipY(false); // 원상 복귀
         drone.state = 'descending';
         drone.wallSegment = null;
         drone.rotation2 = null;
@@ -3871,11 +3961,9 @@ class GameScene extends Phaser.Scene {
         const y = cy + Math.sin(startAngle) * r;
 
         const baseTurret = this.turretSpawnerSpec?.turret ?? {};
-        const turretSpec = { ...baseTurret };
-        const t = this.spawnTurret(x, y, turretSpec);
+        const turretSpec = { ...baseTurret, color: cfg.color, strokeColor: cfg.strokeColor };
+        const t = this.spawnTurret(x, y, turretSpec, true);
         t.invincible = true;
-        t.setFillStyle(cfg.color ?? 0xccccdd);
-        t.setStrokeStyle(3, cfg.strokeColor ?? 0x4488ff);
         t.setAlpha(1);
         t.orbitCenterX = cx;
         t.orbitCenterY = cy;
