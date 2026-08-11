@@ -13,7 +13,7 @@ class PatternLabScene extends Phaser.Scene {
     init(data) {
         this.bossIndex = data?.bossIndex ?? 0;
         if (this.bossIndex < 0 || this.bossIndex >= Stages.length) this.bossIndex = 0;
-        this.bossLevel = Math.max(1, Math.min(data?.bossLevel ?? 1, MAX_WEAPON_LEVEL));
+        this.bossLevel = Math.max(1, Math.min(data?.bossLevel ?? 1, MAX_BOSS_LEVEL));
         this.baseBossData = Stages[this.bossIndex];
         this.scale.resize(LAB_TOTAL_W, LAB_H);
     }
@@ -167,7 +167,7 @@ class PatternLabScene extends Phaser.Scene {
         const btnSize = 22;
         const gap = 3;
         const rowStartX = LAB_SIDEBAR_X + 8;
-        for (let lv = 1; lv <= MAX_WEAPON_LEVEL; lv += 1) {
+        for (let lv = 1; lv <= MAX_BOSS_LEVEL; lv += 1) {
             const bx = rowStartX + (lv - 1) * (btnSize + gap);
             const isCurrent = lv === this.bossLevel;
             const bg = this.add.rectangle(bx, y, btnSize, btnSize,

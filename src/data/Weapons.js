@@ -147,19 +147,21 @@ const BASIC_WEAPON_IDS = [
     'basicLinear', 'piercing', 'spread', 'homing', 'orbit',
     'boomerang', 'chain', 'beam', 'mine',
 ];
-const MAX_WEAPON_LEVEL = 5;
+const MAX_WEAPON_LEVEL = 10;
+// 보스 난이도(스테이지 선택 UI 상한). 무기 상한과 별개로 관리.
+const MAX_BOSS_LEVEL = 5;
 
 // 각 무기 레벨업 시 오르는 스탯 한 줄 요약. LoadoutScene 미리보기 밑에 표시.
 const WEAPON_LEVEL_UP_DESCRIPTIONS = {
-    basicLinear: '발사간격 Lv당 -13%',
-    piercing: '데미지 +15%/Lv, 탄 크기 +5%/Lv',
-    spread: '탄수 +1 (2Lv마다), 데미지 +7.5%/Lv',
-    homing: '데미지 +15%/Lv',
-    orbit: '궤도수 +1 (2Lv마다), 데미지 +7.5%/Lv',
-    boomerang: '(레벨업 미정)',
-    chain: '(레벨업 미정)',
-    beam: '(레벨업 미정)',
-    mine: '(레벨업 미정)',
+    basicLinear: '발사간격 -13%/Lv',
+    piercing: '발사간격 -9%/Lv, 탄 크기 +5%/Lv',
+    spread: '탄수 +1 (2Lv마다), 발사간격 -4%/Lv',
+    homing: '발사간격 -13%/Lv',
+    orbit: '궤도수 +1 (2Lv마다)',
+    boomerang: '발사간격 -7%/Lv, 탄 크기 +7.5%/Lv',
+    chain: '발사간격 -13%/Lv',
+    beam: '데미지·유지시간 +7.5%/Lv, 광선 폭 +성장',
+    mine: '발사간격 -7%/Lv, 지뢰·파편 크기 +성장',
 };
 
 function getWeaponLevelUpDescription(id) {
@@ -191,18 +193,32 @@ function getWeapon(id, level) {
     if (id === 'basicLinear') {
         w.intervalMs = Math.round(base.intervalMs / Math.pow(1.15, lv));
     } else if (id === 'piercing') {
-        w.damage = base.damage * Math.pow(1.15, lv);
+        w.intervalMs = Math.round(base.intervalMs / Math.pow(1.1, lv));
         w.width = base.width * Math.pow(1.05, lv);
         w.height = base.height * Math.pow(1.05, lv);
     } else if (id === 'spread') {
         w.pellets = base.pellets + Math.floor(lv / 2);
-        w.damage = base.damage * Math.pow(1.075, lv);
+        w.intervalMs = Math.round(base.intervalMs / Math.pow(1.04, lv));
     } else if (id === 'homing') {
-        w.damage = base.damage * Math.pow(1.15, lv);
+        w.intervalMs = Math.round(base.intervalMs / Math.pow(1.15, lv));
     } else if (id === 'orbit') {
         w.orbCount = base.orbCount + Math.floor(lv / 2);
+    } else if (id === 'boomerang') {
+        w.intervalMs = Math.round(base.intervalMs / Math.pow(1.075, lv));
+        w.width = base.width * Math.pow(1.075, lv);
+        w.height = base.height * Math.pow(1.075, lv);
+    } else if (id === 'chain') {
+        w.intervalMs = Math.round(base.intervalMs / Math.pow(1.15, lv));
+    } else if (id === 'beam') {
         w.damage = base.damage * Math.pow(1.075, lv);
-        w.missileDamage = base.missileDamage * Math.pow(1.075, lv);
+        w.overheatThreshold = base.overheatThreshold * Math.pow(1.075, lv);
+        w.visualWidth = base.visualWidth + 1.5 * lv;
+        w.hitWidth = base.hitWidth + 1.0 * lv;
+    } else if (id === 'mine') {
+        w.intervalMs = Math.round(base.intervalMs / Math.pow(1.075, lv));
+        w.mineRadius = base.mineRadius + 0.85 * lv;
+        w.explosionBulletRadius = base.explosionBulletRadius + 0.32 * lv;
+        w.explosionBulletHitRadius = base.explosionBulletHitRadius + 1.9 * lv;
     }
     w.name = `${base.name} Lv${lv}`;
     w.color = brightenColorForLevel(base.color, lv);

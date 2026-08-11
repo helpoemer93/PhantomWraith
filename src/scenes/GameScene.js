@@ -115,7 +115,7 @@ class GameScene extends Phaser.Scene {
         const clampedStage = Math.max(0, Math.min(stageIdx, Stages.length - 1));
         this.stageIndex = clampedStage;
         const selectedLevel = this.registry.get('selectedLevel') ?? 1;
-        this.bossLevel = Math.max(1, Math.min(selectedLevel, MAX_WEAPON_LEVEL));
+        this.bossLevel = Math.max(1, Math.min(selectedLevel, MAX_BOSS_LEVEL));
         this.boss = new Boss(this, Stages[clampedStage], this.bossLevel);
 
         AudioSettings.applyMaster(this);

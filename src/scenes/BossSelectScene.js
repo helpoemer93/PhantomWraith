@@ -66,7 +66,7 @@ class BossSelectScene extends Phaser.Scene {
     maxSelectableLevel(bossIdx) {
         const boss = Stages[bossIdx];
         const cleared = this.bossProgress[boss.id] ?? 0;
-        return Math.min(MAX_WEAPON_LEVEL, cleared + 1);
+        return Math.min(MAX_BOSS_LEVEL, cleared + 1);
     }
 
     buildDetailPanel() {
@@ -113,10 +113,10 @@ class BossSelectScene extends Phaser.Scene {
         const lvButtons = [];
         const btnSize = 34;
         const gap = 6;
-        const totalW = btnSize * MAX_WEAPON_LEVEL + gap * (MAX_WEAPON_LEVEL - 1);
+        const totalW = btnSize * MAX_BOSS_LEVEL + gap * (MAX_BOSS_LEVEL - 1);
         const startX = this.centerX - totalW / 2 + btnSize / 2;
         const btnY = y + rowH / 2 - 20;
-        for (let lv = 1; lv <= MAX_WEAPON_LEVEL; lv += 1) {
+        for (let lv = 1; lv <= MAX_BOSS_LEVEL; lv += 1) {
             const bx = startX + (lv - 1) * (btnSize + gap);
             const btn = this.add.rectangle(bx, btnY, btnSize, btnSize, 0x333344)
                 .setStrokeStyle(1, 0x555577);
