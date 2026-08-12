@@ -1,3 +1,18 @@
+// 점 (px, py)에서 선분 (x1,y1)-(x2,y2)까지 최단 거리 제곱
+function pointSegDistSq(px, py, x1, y1, x2, y2) {
+    const dx = x2 - x1, dy = y2 - y1;
+    const lenSq = dx * dx + dy * dy;
+    if (lenSq < 1e-6) {
+        const ex = px - x1, ey = py - y1;
+        return ex * ex + ey * ey;
+    }
+    let t = ((px - x1) * dx + (py - y1) * dy) / lenSq;
+    t = Math.max(0, Math.min(1, t));
+    const cx = x1 + t * dx, cy = y1 + t * dy;
+    const ex = px - cx, ey = py - cy;
+    return ex * ex + ey * ey;
+}
+
 class GameScene extends Phaser.Scene {
     constructor() {
         super({ key: 'GameScene' });
@@ -87,6 +102,21 @@ class GameScene extends Phaser.Scene {
         this.birdCenterFireTime = null;
         this.clouds = [];
         this.cloudSpec = null;
+        // 썬더 페이즈1: 위아래 왕복 레이저 벽 + DVD 튕기는 찌리리공 2마리.
+        this.laserWall = null;
+        this.laserWallSpec = null;
+        this.laserWallH = null;
+        this.laserWallHSpec = null;
+        this.magneton = null;
+        this.magnetonSpec = null;
+        this.coils = [];
+        this.coilBurstSpec = null;
+        this.coilBurstLastTime = 0;
+        this.magneticWebGraphics = null;
+        this.edgeFieldsSpec = null;
+        this.edgeFieldsGraphics = null;
+        this.voltorbs = [];
+        this.voltorbSpec = null;
         this.currentInterlude = null;
         this.interludeStartTime = 0;
         this.interludeFrozen = false;
@@ -560,6 +590,14 @@ class GameScene extends Phaser.Scene {
         this.updateInterludeCycle(time);
         this.updateSnowflakes(delta);
         this.updateClouds(time, delta);
+        this.updateLaserWall(time, delta);
+        this.updateLaserWallH(time, delta);
+        this.updateMagneton(time, delta);
+        this.updateCoilBurstSpawner(time);
+        this.updateCoils(time, delta);
+        this.updateMagneticWeb(time);
+        this.updateEdgeFields(time);
+        this.updateVoltorbs(time, delta);
         this.updateBossBulletSideMotion();
         this.updateBladeMissiles(time);
         this.updateDeceleratingBullets(delta);
@@ -2547,6 +2585,647 @@ class GameScene extends Phaser.Scene {
         this.cloudSpec = null;
     }
 
+    // ===== 썬더 레이저 벽 (위아래 왕복) =====
+    startLaserWall(spec) {
+        this.destroyLaserWall();
+        this.laserWallSpec = spec;
+        const w = GameConfig.GAME_WIDTH;
+        const h = spec.height ?? 16;
+        const y = spec.startY ?? 40;
+        const wall = this.add.rectangle(w / 2, y, w, h, spec.color ?? 0xffee66);
+        wall.setStrokeStyle(1, spec.strokeColor ?? 0xffffff);
+        wall.isLaserWall = true;
+        wall.wallDir = spec.initialDir ?? 1; // +1 down, -1 up
+        wall.damage = spec.damage ?? 1;
+        this.laserWall = wall;
+    }
+
+    destroyLaserWall() {
+        if (this.laserWall) {
+            this.laserWall.destroy();
+            this.laserWall = null;
+        }
+        this.laserWallSpec = null;
+    }
+
+    updateLaserWall(time, delta) {
+        if (!this.laserWall || !this.laserWallSpec) return;
+        const spec = this.laserWallSpec;
+        const dt = delta / 1000;
+        const speed = spec.speed ?? 180;
+        const minY = spec.minY ?? 40;
+        const maxY = spec.maxY ?? 760;
+        this.laserWall.y += this.laserWall.wallDir * speed * dt;
+        if (this.laserWall.y <= minY) {
+            this.laserWall.y = minY;
+            this.laserWall.wallDir = 1;
+        } else if (this.laserWall.y >= maxY) {
+            this.laserWall.y = maxY;
+            this.laserWall.wallDir = -1;
+        }
+        // 접촉 판정: 플레이어 y가 벽 두께 ± 반경 이내면 데미지
+        const halfH = (spec.height ?? 16) / 2;
+        for (const p of [this.player1, this.player2]) {
+            if (!p || !p.sprite || !p.sprite.active || p.isInvincible) continue;
+            const pr = p.size / 2;
+            if (Math.abs(p.sprite.y - this.laserWall.y) <= halfH + pr) {
+                this.onBossBodyHit(p);
+                break;
+            }
+        }
+    }
+
+    // ===== 썬더 페이즈2 좌우 왕복 세로 레이저 벽 =====
+    startLaserWallH(spec) {
+        this.destroyLaserWallH();
+        this.laserWallHSpec = spec;
+        const h = GameConfig.GAME_HEIGHT;
+        const w = spec.width ?? 16;
+        const x = spec.startX ?? 40;
+        const wall = this.add.rectangle(x, h / 2, w, h, spec.color ?? 0xffee66);
+        wall.setStrokeStyle(1, spec.strokeColor ?? 0xffffff);
+        wall.isLaserWall = true;
+        wall.wallDir = spec.initialDir ?? 1; // +1 right, -1 left
+        wall.damage = spec.damage ?? 1;
+        this.laserWallH = wall;
+    }
+
+    destroyLaserWallH() {
+        if (this.laserWallH) {
+            this.laserWallH.destroy();
+            this.laserWallH = null;
+        }
+        this.laserWallHSpec = null;
+    }
+
+    updateLaserWallH(time, delta) {
+        if (!this.laserWallH || !this.laserWallHSpec) return;
+        const spec = this.laserWallHSpec;
+        const dt = delta / 1000;
+        const speed = spec.speed ?? 180;
+        const minX = spec.minX ?? 40;
+        const maxX = spec.maxX ?? 440;
+        this.laserWallH.x += this.laserWallH.wallDir * speed * dt;
+        if (this.laserWallH.x <= minX) {
+            this.laserWallH.x = minX;
+            this.laserWallH.wallDir = 1;
+        } else if (this.laserWallH.x >= maxX) {
+            this.laserWallH.x = maxX;
+            this.laserWallH.wallDir = -1;
+        }
+        const halfW = (spec.width ?? 16) / 2;
+        for (const p of [this.player1, this.player2]) {
+            if (!p || !p.sprite || !p.sprite.active || p.isInvincible) continue;
+            const pr = p.size / 2;
+            if (Math.abs(p.sprite.x - this.laserWallH.x) <= halfW + pr) {
+                this.onBossBodyHit(p);
+                break;
+            }
+        }
+    }
+
+    // ===== 썬더 페이즈1 자포코일: x=240 고정, y축 왕복. 인터루드 시 자폭 =====
+    spawnMagneton(spec) {
+        this.destroyMagneton();
+        this.magnetonSpec = spec;
+        const boss = this.boss;
+        const bx = spec.fixedX ?? boss?.sprite?.x ?? GameConfig.GAME_WIDTH / 2;
+        // 썬더 몸통 아래에서 시작
+        const by = (boss?.sprite?.y ?? 120) + (boss?.data?.size ?? 80) + spec.radius + 8;
+        const useSprite = spec.spriteKey && this.textures.exists(spec.spriteKey + '-sprite');
+        let obj;
+        if (useSprite) {
+            obj = this.add.sprite(bx, by, spec.spriteKey + '-sprite');
+            const animKey = spec.animKey ?? 'magneton-idle';
+            if (!this.anims.exists(animKey)) {
+                this.anims.create({
+                    key: animKey,
+                    frames: this.anims.generateFrameNumbers(spec.spriteKey + '-sprite', { start: 0, end: 5 }),
+                    frameRate: 8,
+                    repeat: -1,
+                });
+            }
+            obj.play(animKey);
+            obj.setDisplaySize(spec.radius * 2, spec.radius * 2);
+        } else {
+            obj = this.add.circle(bx, by, spec.radius, 0x8899cc);
+            obj.setStrokeStyle(2, 0xffffff);
+        }
+        const overlay = this.add.circle(bx, by, spec.radius, spec.warnOverlayColor ?? 0xffffff);
+        overlay.setAlpha(0);
+        this.magneton = {
+            sprite: obj,
+            overlay,
+            radius: spec.radius,
+            vy: (spec.initialDir ?? 1) * spec.moveSpeed,   // 세로 이동만
+            state: 'move',                                 // 'move' | 'warn' | 'dead'
+            warnStartTime: 0,
+            warnMs: 0,
+            burstBullets: 0,
+            burstBullet: null,
+        };
+    }
+
+    destroyMagneton() {
+        if (this.magneton) {
+            if (this.magneton.sprite) this.magneton.sprite.destroy();
+            if (this.magneton.overlay) this.magneton.overlay.destroy();
+            this.magneton = null;
+        }
+        this.magnetonSpec = null;
+    }
+
+    updateMagneton(time, delta) {
+        if (!this.magneton || !this.magnetonSpec) return;
+        const m = this.magneton;
+        if (!m.sprite || !m.sprite.active) return;
+        const spec = this.magnetonSpec;
+        const dt = delta / 1000;
+        const r = spec.radius;
+
+        if (m.state === 'warn') {
+            // 자폭 경고: 정지, 오버레이 알파 상승. warnMs 경과 → 사방 90발 발사 후 파괴.
+            const t = Math.min(1, (time - m.warnStartTime) / m.warnMs);
+            m.overlay.setAlpha(t * (spec.warnMaxAlpha ?? 1.0));
+            m.overlay.x = m.sprite.x;
+            m.overlay.y = m.sprite.y;
+            if (time - m.warnStartTime >= m.warnMs) {
+                this.fireVoltorbBurst(m.sprite.x, m.sprite.y, {
+                    burstBullets: m.burstBullets,
+                    burstBullet: m.burstBullet,
+                });
+                m.state = 'dead';
+                this.destroyMagneton();
+            }
+            return;
+        }
+
+        // 세로 왕복 (x 고정). y 상하한 도달 시 방향 반전.
+        m.sprite.y += m.vy * dt;
+        const yMin = spec.yMin ?? r;
+        const yMax = spec.yMax ?? (GameConfig.GAME_HEIGHT - r);
+        if (m.sprite.y <= yMin) { m.sprite.y = yMin; m.vy = Math.abs(m.vy); }
+        else if (m.sprite.y >= yMax) { m.sprite.y = yMax; m.vy = -Math.abs(m.vy); }
+
+        m.overlay.x = m.sprite.x;
+        m.overlay.y = m.sprite.y;
+
+        // 접촉 데미지
+        for (const p of [this.player1, this.player2]) {
+            if (!p || !p.sprite || !p.sprite.active || p.isInvincible) continue;
+            const dx = p.sprite.x - m.sprite.x;
+            const dy = p.sprite.y - m.sprite.y;
+            const rr = r + p.size / 2;
+            if (dx * dx + dy * dy <= rr * rr) {
+                this.onBossBodyHit(p);
+                break;
+            }
+        }
+    }
+
+    // ===== 코일 폭발 스폰: 자포코일 위치에서 6방향으로 6마리 동시 발사 =====
+    startCoilBurstSpawner(spec) {
+        this.coilBurstSpec = spec;
+        // 즉시 스폰 옵션이면 다음 update에서 바로 발사되도록 lastTime을 intervalMs 전으로 설정
+        this.coilBurstLastTime = spec.immediate ? this.time.now - (spec.intervalMs ?? 6000) : this.time.now;
+        if (!this.magneticWebGraphics) {
+            this.magneticWebGraphics = this.add.graphics();
+            this.magneticWebGraphics.setDepth(-1);   // 코일·자포코일 뒤로
+        }
+    }
+
+    updateCoilBurstSpawner(time) {
+        if (!this.coilBurstSpec) return;
+        const spec = this.coilBurstSpec;
+        if (time - this.coilBurstLastTime < (spec.intervalMs ?? 6000)) return;
+        // 자포코일 없거나 자폭 중이면 스폰 중지
+        if (!this.magneton || this.magneton.state !== 'move') return;
+        this.coilBurstLastTime = time;
+        this.fireCoilBurst(spec);
+    }
+
+    fireCoilBurst(spec) {
+        const mx = this.magneton.sprite.x;
+        const my = this.magneton.sprite.y;
+        const dirs = spec.directionsDeg ?? [0, 60, 120, 180, 240, 300];
+        const coilSpec = spec.coil;
+        for (const deg of dirs) {
+            const rad = Phaser.Math.DegToRad(deg);
+            const vx = Math.cos(rad) * coilSpec.moveSpeed;
+            const vy = Math.sin(rad) * coilSpec.moveSpeed;
+            this.spawnCoil(mx, my, vx, vy, coilSpec);
+        }
+    }
+
+    spawnCoil(x, y, vx, vy, spec) {
+        const useSprite = this.textures.exists('metagross-chaser');
+        let obj;
+        let currentDir = 0;
+        if (useSprite) {
+            this.ensureMetagrossAnims();
+            obj = this.add.sprite(x, y, 'metagross-chaser');
+            currentDir = this.angleToDir8(vx, vy);
+            obj.play(`metagross-chaser-dir-${currentDir}`);
+            obj.setDisplaySize(spec.radius * 2, spec.radius * 2);
+        } else {
+            obj = this.add.circle(x, y, spec.radius, 0x99aacc);
+            obj.setStrokeStyle(1, 0xffffff);
+        }
+        this.coils.push({
+            sprite: obj,
+            radius: spec.radius,
+            vx, vy,
+            spawnTime: this.time.now,
+            lifetimeMs: spec.lifetimeMs ?? 12000,
+            fleeing: false,
+            fleeVx: 0,
+            fleeVy: 0,
+            usesDirAnim: useSprite,
+            currentDir,
+        });
+    }
+
+    // 인터루드 진입 시 호출. 남아있는 코일 전부 도망 상태로 전환.
+    startCoilsFlee(fleeSpec) {
+        if (!this.magneton) return;
+        const spec = fleeSpec ?? {};
+        const mx = this.magneton.sprite.x;
+        const my = this.magneton.sprite.y;
+        const maxSpd = spec.maxSpeed ?? 500;
+        const minSpd = spec.minSpeed ?? 150;
+        const farDist = spec.farDist ?? 400;
+        for (const c of this.coils) {
+            const dx = c.sprite.x - mx;
+            const dy = c.sprite.y - my;
+            const dist = Math.hypot(dx, dy);
+            let ux, uy;
+            if (dist < 0.01) {
+                const rad = Math.random() * Math.PI * 2;
+                ux = Math.cos(rad); uy = Math.sin(rad);
+            } else {
+                ux = dx / dist; uy = dy / dist;
+            }
+            const distNorm = Math.min(1, dist / farDist);
+            const spd = maxSpd * (1 - distNorm) + minSpd * distNorm;
+            c.fleeing = true;
+            c.fleeVx = ux * spd;
+            c.fleeVy = uy * spd;
+        }
+    }
+
+    updateCoils(time, delta) {
+        if (this.coils.length === 0) return;
+        const dt = delta / 1000;
+        for (let i = this.coils.length - 1; i >= 0; i -= 1) {
+            const c = this.coils[i];
+            if (!c.sprite || !c.sprite.active) { this.coils.splice(i, 1); continue; }
+            if (c.fleeing) {
+                // 도망 상태: 수명·벽 튕김 무시. 벡터 그대로 이동해 화면 밖으로.
+                c.sprite.x += c.fleeVx * dt;
+                c.sprite.y += c.fleeVy * dt;
+            } else {
+                // 수명 초과 시 제거
+                if (time - c.spawnTime >= c.lifetimeMs) {
+                    c.sprite.destroy();
+                    this.coils.splice(i, 1);
+                    continue;
+                }
+                // 이동 + 4벽 개별 튕김
+                c.sprite.x += c.vx * dt;
+                c.sprite.y += c.vy * dt;
+                const r = c.radius;
+                const xMin = r, xMax = GameConfig.GAME_WIDTH - r;
+                const yMin = r, yMax = GameConfig.GAME_HEIGHT - r;
+                if (c.sprite.x <= xMin) { c.sprite.x = xMin; c.vx = Math.abs(c.vx); }
+                else if (c.sprite.x >= xMax) { c.sprite.x = xMax; c.vx = -Math.abs(c.vx); }
+                if (c.sprite.y <= yMin) { c.sprite.y = yMin; c.vy = Math.abs(c.vy); }
+                else if (c.sprite.y >= yMax) { c.sprite.y = yMax; c.vy = -Math.abs(c.vy); }
+            }
+            // 8방향 anim 갱신 (현재 실이동 벡터 기반). 방향 바뀐 경우에만 스위칭.
+            if (c.usesDirAnim) {
+                const mvx = c.fleeing ? c.fleeVx : c.vx;
+                const mvy = c.fleeing ? c.fleeVy : c.vy;
+                const dir = this.angleToDir8(mvx, mvy);
+                if (dir !== c.currentDir) {
+                    this.playDirAnim(c.sprite, `metagross-chaser-dir-${dir}`);
+                    c.currentDir = dir;
+                }
+            }
+            // 접촉 데미지 (도망 중에도 유지)
+            for (const p of [this.player1, this.player2]) {
+                if (!p || !p.sprite || !p.sprite.active || p.isInvincible) continue;
+                const dx = p.sprite.x - c.sprite.x;
+                const dy = p.sprite.y - c.sprite.y;
+                const rr = c.radius + p.size / 2;
+                if (dx * dx + dy * dy <= rr * rr) {
+                    this.onBossBodyHit(p);
+                    break;
+                }
+            }
+        }
+    }
+
+    destroyCoils() {
+        for (const c of this.coils) {
+            if (c.sprite) c.sprite.destroy();
+        }
+        this.coils = [];
+        this.coilBurstSpec = null;
+        if (this.magneticWebGraphics) {
+            this.magneticWebGraphics.clear();
+            this.magneticWebGraphics.destroy();
+            this.magneticWebGraphics = null;
+        }
+    }
+
+    // ===== 자기력선 그물망: 매 프레임 각 코일 → 가장 가까운 코일 K기 연결 =====
+    updateMagneticWeb(time) {
+        if (!this.coilBurstSpec || !this.magneticWebGraphics) return;
+        const web = this.coilBurstSpec.web;
+        if (!web) return;
+        const g = this.magneticWebGraphics;
+        g.clear();
+
+        const n = this.coils.length;
+        if (n === 0) return;
+        const linkK = web.linkPerCoil ?? 2;
+
+        // 각 코일마다 가장 가까운 K기 인덱스 계산 → 라인 (중복은 정렬 pair set으로 제거)
+        const linePairs = new Set();
+        for (let i = 0; i < n; i += 1) {
+            const ci = this.coils[i];
+            if (!ci.sprite || !ci.sprite.active) continue;
+            const dists = [];
+            for (let j = 0; j < n; j += 1) {
+                if (j === i) continue;
+                const cj = this.coils[j];
+                if (!cj.sprite || !cj.sprite.active) continue;
+                const dx = cj.sprite.x - ci.sprite.x;
+                const dy = cj.sprite.y - ci.sprite.y;
+                dists.push({ idx: j, d2: dx * dx + dy * dy });
+            }
+            dists.sort((a, b) => a.d2 - b.d2);
+            for (let k = 0; k < Math.min(linkK, dists.length); k += 1) {
+                const j = dists[k].idx;
+                const key = i < j ? `${i}-${j}` : `${j}-${i}`;
+                linePairs.add(key);
+            }
+        }
+
+        // 라인 렌더
+        g.lineStyle(web.lineWidth ?? 2, web.lineColor ?? 0xaaddff, web.lineAlpha ?? 0.55);
+        const segments = [];
+        for (const key of linePairs) {
+            const [ai, bi] = key.split('-').map(Number);
+            const a = this.coils[ai], b = this.coils[bi];
+            if (!a || !b || !a.sprite || !b.sprite) continue;
+            g.lineBetween(a.sprite.x, a.sprite.y, b.sprite.x, b.sprite.y);
+            segments.push({ x1: a.sprite.x, y1: a.sprite.y, x2: b.sprite.x, y2: b.sprite.y });
+        }
+
+        // 라인 접촉 데미지 (선분 vs 플레이어 원 최단 거리). 히트 후 플레이어 무적이 도배 방지 담당.
+        const halfW = (web.lineWidth ?? 2) / 2;
+        for (const p of [this.player1, this.player2]) {
+            if (!p || !p.sprite || !p.sprite.active || p.isInvincible) continue;
+            const pr = p.size / 2 + halfW;
+            const px = p.sprite.x, py = p.sprite.y;
+            for (const s of segments) {
+                if (pointSegDistSq(px, py, s.x1, s.y1, s.x2, s.y2) <= pr * pr) {
+                    this.onBossBodyHit(p);
+                    break;
+                }
+            }
+        }
+    }
+
+    // ===== 4벽 전체 전기장 (DVD 캠핑 봉쇄) =====
+    // 화면 테두리 4벽에 얇은 전기 라인. 플레이어가 벽에 붙으면 데미지.
+    startEdgeFields(spec) {
+        this.destroyEdgeFields();
+        this.edgeFieldsSpec = spec;
+        this.edgeFieldsGraphics = this.add.graphics();
+        this.edgeFieldsGraphics.setDepth(-2);
+    }
+
+    destroyEdgeFields() {
+        if (this.edgeFieldsGraphics) {
+            this.edgeFieldsGraphics.clear();
+            this.edgeFieldsGraphics.destroy();
+            this.edgeFieldsGraphics = null;
+        }
+        this.edgeFieldsSpec = null;
+    }
+
+    updateEdgeFields(time) {
+        if (!this.edgeFieldsSpec || !this.edgeFieldsGraphics) return;
+        const spec = this.edgeFieldsSpec;
+        const g = this.edgeFieldsGraphics;
+        const w = GameConfig.GAME_WIDTH;
+        const h = GameConfig.GAME_HEIGHT;
+        const pulse = Math.sin((time / (spec.pulsePeriodMs ?? 700)) * Math.PI * 2) * (spec.pulseAmp ?? 0.15);
+        const coreThickness = spec.coreThickness ?? 2;
+        const coreAlpha = Math.max(0, (spec.coreAlpha ?? 0.85) + pulse);
+        const arcThickness = spec.arcThickness ?? 2;
+        const arcAlpha = Math.max(0, (spec.arcAlpha ?? 0.7) + pulse);
+        const segLen = spec.arcSegLen ?? 10;
+        const jit = spec.arcJitter ?? 4;
+        const arcCount = spec.arcCount ?? 2;
+        const coreOff = coreThickness / 2;
+
+        g.clear();
+
+        // 안쪽 밝은 코어 라인 (안정, 벽에 딱 붙어있는 하얀 선)
+        g.lineStyle(coreThickness, spec.coreColor ?? 0xccf2ff, coreAlpha);
+        g.lineBetween(coreOff, coreOff, w - coreOff, coreOff);
+        g.lineBetween(w - coreOff, coreOff, w - coreOff, h - coreOff);
+        g.lineBetween(w - coreOff, h - coreOff, coreOff, h - coreOff);
+        g.lineBetween(coreOff, h - coreOff, coreOff, coreOff);
+
+        // 바깥쪽 지직 라인 (매 프레임 세그먼트마다 수직 방향 랜덤 지터). arcCount번 겹쳐 그림.
+        g.lineStyle(arcThickness, spec.arcColor ?? 0x66ccff, arcAlpha);
+        // 각 벽: 안쪽으로만 지터 (화면 바깥으로 튀지 않게). 지터 부호 고정.
+        // 상단 (y=0, x: 0→w). 안쪽 = +y 방향. jitter y += (0..jit)
+        // 우측 (x=w, y: 0→h). 안쪽 = -x 방향. jitter x -= (0..jit)
+        // 하단 (y=h, x: 0→w). 안쪽 = -y 방향. jitter y -= (0..jit)
+        // 좌측 (x=0, y: 0→h). 안쪽 = +x 방향. jitter x += (0..jit)
+        for (let iter = 0; iter < arcCount; iter += 1) {
+            this._drawJitterEdge(g, 0, 0, w, 0, 0, 1, segLen, jit);          // 상 (안쪽=아래)
+            this._drawJitterEdge(g, w, 0, w, h, -1, 0, segLen, jit);         // 우 (안쪽=왼)
+            this._drawJitterEdge(g, w, h, 0, h, 0, -1, segLen, jit);         // 하 (안쪽=위)
+            this._drawJitterEdge(g, 0, h, 0, 0, 1, 0, segLen, jit);          // 좌 (안쪽=오른)
+        }
+
+        // 접촉 데미지
+        const th = spec.hitThreshold ?? 2;
+        for (const p of [this.player1, this.player2]) {
+            if (!p || !p.sprite || !p.sprite.active || p.isInvincible) continue;
+            const pr = p.size / 2;
+            const px = p.sprite.x, py = p.sprite.y;
+            if (px - pr <= th || px + pr >= w - th || py - pr <= th || py + pr >= h - th) {
+                this.onBossBodyHit(p);
+            }
+        }
+    }
+
+    // 벽 (x1,y1)→(x2,y2)을 세그먼트 단위로 나눠, 각 중간점에 안쪽 방향(nx,ny)으로 0~jit 랜덤 지터.
+    _drawJitterEdge(g, x1, y1, x2, y2, nx, ny, segLen, jit) {
+        const dx = x2 - x1, dy = y2 - y1;
+        const len = Math.hypot(dx, dy);
+        const segs = Math.max(2, Math.floor(len / segLen));
+        g.beginPath();
+        g.moveTo(x1, y1);
+        for (let i = 1; i < segs; i += 1) {
+            const t = i / segs;
+            const px = x1 + dx * t;
+            const py = y1 + dy * t;
+            const j = Math.random() * jit;
+            g.lineTo(px + nx * j, py + ny * j);
+        }
+        g.lineTo(x2, y2);
+        g.strokePath();
+    }
+
+    // ===== 썬더 페이즈1→2 인터루드 =====
+    // 자포코일 자폭 예약 + 모든 코일 즉시 파괴 (그물망도 함께 사라짐) + 위아래 벽 사전 소환.
+    startThunderPhase2Interlude(spec) {
+        // 자포코일 자폭 상태 진입 (경고 → 사방 90발 → 파괴)
+        if (this.magneton) {
+            const sd = spec.magnetonSelfDestruct ?? {};
+            this.magneton.state = 'warn';
+            this.magneton.warnStartTime = this.time.now;
+            this.magneton.warnMs = sd.warnMs ?? 2000;
+            this.magneton.burstBullets = sd.burstBullets ?? 90;
+            this.magneton.burstBullet = sd.burstBullet ?? { radius: 3, color: 0xffffdd, speed: 140, damage: 1 };
+        }
+        // 기존 코일은 도망 상태로 전환. 신규 스폰은 magneton.state로 이미 차단됨(warn→dead).
+        // coilBurstSpec은 유지 → 도망 중에도 자기력선 그물망 계속 렌더링.
+        this.startCoilsFlee(spec.coilsFlee);
+        // 페이즈2 유닛 사전 소환 — 위아래 벽 (좌우 벽은 페이즈1부터 유지 중)
+        if (spec.laserWall) this.startLaserWall(spec.laserWall);
+    }
+
+    // ===== 썬더 찌리리공 (DVD 튕김 + 6초 사이클 90발) =====
+    spawnVoltorbs(spec) {
+        this.destroyVoltorbs();
+        this.voltorbSpec = spec;
+        const boss = this.boss;
+        const bx = boss?.sprite?.x ?? GameConfig.GAME_WIDTH / 2;
+        const by = boss?.sprite?.y ?? 120;
+        const anglesDeg = spec.initialAngleDegs ?? [135, 45];
+        for (let i = 0; i < (spec.count ?? 2); i += 1) {
+            const useSprite = spec.spriteKey && this.textures.exists(spec.spriteKey + '-sprite');
+            let obj;
+            if (useSprite) {
+                obj = this.add.sprite(bx, by, spec.spriteKey + '-sprite');
+                const animKey = spec.animKey ?? 'voltorb-spin';
+                if (!this.anims.exists(animKey)) {
+                    this.anims.create({
+                        key: animKey,
+                        frames: this.anims.generateFrameNumbers(spec.spriteKey + '-sprite', { start: 0, end: 5 }),
+                        frameRate: 12,
+                        repeat: -1,
+                    });
+                }
+                obj.play(animKey);
+                obj.setDisplaySize(spec.radius * 2, spec.radius * 2);
+            } else {
+                obj = this.add.circle(bx, by, spec.radius, 0xff4444);
+                obj.setStrokeStyle(1, 0xffffff);
+            }
+            // 경고 오버레이 (하얀색). 초기 알파 0, burst 직전 서서히 상승.
+            const overlay = this.add.circle(bx, by, spec.radius, spec.warnOverlayColor ?? 0xffffff);
+            overlay.setAlpha(0);
+            const rad = Phaser.Math.DegToRad(anglesDeg[i % anglesDeg.length]);
+            const vx = Math.cos(rad) * spec.moveSpeed;
+            const vy = Math.sin(rad) * spec.moveSpeed;
+            this.voltorbs.push({
+                sprite: obj,
+                overlay,
+                radius: spec.radius,
+                vx, vy,
+                lastBurstTime: this.time.now,   // 첫 이동 시작 기준
+                state: 'move',                  // 'move' | 'warn'
+                warnStartTime: 0,
+            });
+        }
+    }
+
+    destroyVoltorbs() {
+        for (const v of this.voltorbs) {
+            if (v.sprite) v.sprite.destroy();
+            if (v.overlay) v.overlay.destroy();
+        }
+        this.voltorbs = [];
+        this.voltorbSpec = null;
+    }
+
+    updateVoltorbs(time, delta) {
+        if (!this.voltorbSpec || this.voltorbs.length === 0) return;
+        const spec = this.voltorbSpec;
+        const dt = delta / 1000;
+        const cycleMs = spec.burstCycleMs ?? 6000;
+        const warnMs = spec.burstWarnMs ?? 2000;
+        const moveMs = Math.max(0, cycleMs - warnMs);
+        const r = spec.radius;
+        const xMin = r, xMax = GameConfig.GAME_WIDTH - r;
+        const yMin = r, yMax = GameConfig.GAME_HEIGHT - r;
+
+        for (const v of this.voltorbs) {
+            if (!v.sprite || !v.sprite.active) continue;
+            if (v.state === 'warn') {
+                // 경고 중: 정지, 오버레이 알파 상승. warnMs 경과 → 발사 → 이동 재개
+                const t = Math.min(1, (time - v.warnStartTime) / warnMs);
+                v.overlay.setAlpha(t * (spec.warnMaxAlpha ?? 1.0));
+                if (time - v.warnStartTime >= warnMs) {
+                    this.fireVoltorbBurst(v.sprite.x, v.sprite.y, spec);
+                    v.state = 'move';
+                    v.lastBurstTime = time;
+                    v.overlay.setAlpha(0);
+                }
+            } else {
+                // 이동 + 벽 튕김 (DVD 화면보호기)
+                v.sprite.x += v.vx * dt;
+                v.sprite.y += v.vy * dt;
+                if (v.sprite.x <= xMin) { v.sprite.x = xMin; v.vx = Math.abs(v.vx); }
+                else if (v.sprite.x >= xMax) { v.sprite.x = xMax; v.vx = -Math.abs(v.vx); }
+                if (v.sprite.y <= yMin) { v.sprite.y = yMin; v.vy = Math.abs(v.vy); }
+                else if (v.sprite.y >= yMax) { v.sprite.y = yMax; v.vy = -Math.abs(v.vy); }
+                // 이동 시간 다 되면 경고 상태로 진입
+                if (time - v.lastBurstTime >= moveMs) {
+                    v.state = 'warn';
+                    v.warnStartTime = time;
+                }
+            }
+            // 오버레이 위치 동기화
+            v.overlay.x = v.sprite.x;
+            v.overlay.y = v.sprite.y;
+
+            // 접촉 데미지
+            for (const p of [this.player1, this.player2]) {
+                if (!p || !p.sprite || !p.sprite.active || p.isInvincible) continue;
+                const dx = p.sprite.x - v.sprite.x;
+                const dy = p.sprite.y - v.sprite.y;
+                const rr = r + p.size / 2;
+                if (dx * dx + dy * dy <= rr * rr) {
+                    this.onBossBodyHit(p);
+                    break;
+                }
+            }
+        }
+    }
+
+    fireVoltorbBurst(x, y, spec) {
+        const n = spec.burstBullets ?? 90;
+        const bs = spec.burstBullet ?? { radius: 3, color: 0xffffdd, speed: 140, damage: 1 };
+        for (let i = 0; i < n; i += 1) {
+            const angle = (i / n) * Math.PI * 2;
+            const vx = Math.cos(angle) * (bs.speed ?? 140);
+            const vy = Math.sin(angle) * (bs.speed ?? 140);
+            const b = this.spawnColoredCircleBullet(x, y, vx, vy, bs.radius ?? 3, bs.color ?? 0xffffdd);
+            b.damage = bs.damage ?? 1;
+        }
+    }
+
     updateClouds(time, delta) {
         if (!this.cloudSpec || this.clouds.length === 0) return;
         const dt = delta / 1000;
@@ -2741,6 +3420,13 @@ class GameScene extends Phaser.Scene {
             this.interludeFrozen = false;
             return;
         }
+        if (inter.spec.type === 'thunderPhase2') {
+            this.startThunderPhase2Interlude(inter.spec);
+            this.currentInterlude = inter;
+            this.interludeStartTime = this.time.now;
+            this.interludeFrozen = false;
+            return;
+        }
         this.currentInterlude = inter;
         this.interludeStartTime = this.time.now;
         this.interludeFrozen = false;
@@ -2765,6 +3451,12 @@ class GameScene extends Phaser.Scene {
             return;
         }
         if (spec.durationMs !== undefined && elapsed >= spec.durationMs) {
+            if (spec.type === 'thunderPhase2') {
+                // 인터루드 종료 시 자포코일·코일·구석 전기장 완전 정리 (페이즈2엔 존재 안 함)
+                this.destroyMagneton();
+                this.destroyCoils();
+                this.destroyEdgeFields();
+            }
             this.currentInterlude = null;
             this.interludeFrozen = false;
         }
@@ -2920,6 +3612,12 @@ class GameScene extends Phaser.Scene {
         this.suicideDroneSpawnerSpec = null;
         this.despawnBirdEmitters();
         this.despawnClouds();
+        this.destroyLaserWall();
+        this.destroyLaserWallH();
+        this.destroyVoltorbs();
+        this.destroyMagneton();
+        this.destroyCoils();
+        this.destroyEdgeFields();
         this.destroyRaikou();
         this.destroyEntei();
         this.destroySuicunePhase3();

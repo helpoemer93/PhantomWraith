@@ -4,4 +4,5 @@ const Stages = [
     Metagross,
     Suicune,
     Doopapang,
+    Thunder,
 ];

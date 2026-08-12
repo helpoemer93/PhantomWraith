@@ -54,6 +54,22 @@ class BootScene extends Phaser.Scene {
             'Image/doopapang-sprite-2f.png',
             { frameWidth: 1024, frameHeight: 1024 },
         );
+        this.load.spritesheet(
+            'thunder-sprite',
+            'Image/thunder-sprite-4f.png',
+            { frameWidth: 47, frameHeight: 47 },
+        );
+        this.load.spritesheet(
+            'voltorb-sprite',
+            'Image/voltorb-sprite-6f.png',
+            { frameWidth: 24, frameHeight: 24 },
+        );
+        this.load.spritesheet(
+            'magneton-sprite',
+            'Image/magneton-sprite-6f.png',
+            { frameWidth: 31, frameHeight: 31 },
+        );
+        // 코일(자포코일 부하)은 메타그로스 자폭드론 텍스처(`metagross-chaser`, 8방향×4프레임) 재사용.
 
         this.load.image('latias-sprite', 'Image/latias-sprite-1f.png');
         this.load.image('latios-sprite', 'Image/latios-sprite-1f.png');

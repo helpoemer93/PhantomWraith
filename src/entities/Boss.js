@@ -82,6 +82,20 @@ class Boss {
             this.sprite.setDisplaySize(data.size * 2, data.size * 2 * (369 / 676));
             scene.physics.add.existing(this.sprite);
             this.sprite.body.setImmovable(true);
+        } else if (data.id === 'thunder' && scene.textures.exists('thunder-sprite')) {
+            if (!scene.anims.exists('thunder-idle')) {
+                scene.anims.create({
+                    key: 'thunder-idle',
+                    frames: scene.anims.generateFrameNumbers('thunder-sprite', { start: 0, end: 3 }),
+                    frameRate: 6,
+                    repeat: -1,
+                });
+            }
+            this.sprite = scene.add.sprite(startX, startY, 'thunder-sprite');
+            this.sprite.play('thunder-idle');
+            this.sprite.setDisplaySize(data.size * 2, data.size * 2);
+            scene.physics.add.existing(this.sprite);
+            this.sprite.body.setImmovable(true);
             // body 크기 미지정 → 기본값(frame 크기 × scale) = displaySize 그대로. 히트박스 = 이미지.
         } else if (data.id === 'suicune' && scene.textures.exists('suicune-sprite')) {
             if (!scene.anims.exists('suicune-down')) {
@@ -194,6 +208,24 @@ class Boss {
         }
         if (phase.doopaGatheredOrbs && this.scene.startDoopaGatheredOrbs) {
             this.scene.startDoopaGatheredOrbs(phase.doopaGatheredOrbs);
+        }
+        if (phase.laserWall && this.scene.startLaserWall) {
+            this.scene.startLaserWall(phase.laserWall);
+        }
+        if (phase.laserWallH && this.scene.startLaserWallH) {
+            this.scene.startLaserWallH(phase.laserWallH);
+        }
+        if (phase.voltorbs && this.scene.spawnVoltorbs) {
+            this.scene.spawnVoltorbs(phase.voltorbs);
+        }
+        if (phase.magneton && this.scene.spawnMagneton) {
+            this.scene.spawnMagneton(phase.magneton);
+        }
+        if (phase.coilBurstSpawner && this.scene.startCoilBurstSpawner) {
+            this.scene.startCoilBurstSpawner(phase.coilBurstSpawner);
+        }
+        if (phase.edgeFields && this.scene.startEdgeFields) {
+            this.scene.startEdgeFields(phase.edgeFields);
         }
         if (this.data.id === 'freezer' && index === 1 && this.scene.startFreezerWind) {
             this.scene.startFreezerWind();
