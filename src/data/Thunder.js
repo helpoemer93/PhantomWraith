@@ -1,8 +1,9 @@
 // 페이즈1 좌우 벽 (오른쪽에서 왼쪽으로 시작). 페이즈2까지 유지됨.
+// 색: 하늘색 계열 (피카츄 아이덴티티 노란색과 분리 — 페이즈3 자기력선 색 배치용)
 const ThunderLaserWallHSpec = {
     width: 16,
-    color: 0xffee66,
-    strokeColor: 0xffffff,
+    color: 0x66ccff,
+    strokeColor: 0xccf2ff,
     speed: 180,
     startX: 440,           // 우측 시작 (왼쪽 캐릭터 반응 유예)
     minX: 40,
@@ -14,8 +15,8 @@ const ThunderLaserWallHSpec = {
 // 페이즈2 위아래 벽 (인터루드에서 사전 소환).
 const ThunderLaserWallSpec = {
     height: 16,
-    color: 0xffee66,
-    strokeColor: 0xffffff,
+    color: 0x66ccff,
+    strokeColor: 0xccf2ff,
     speed: 180,
     startY: 40,
     minY: 40,
@@ -122,6 +123,41 @@ const ThunderData = {
                 warnOverlayColor: 0xffffff,
                 warnMaxAlpha: 1.0,
             },
+            interludeOnExit: 'thunder_phase3_transition',
+        },
+        {
+            // 페이즈3: 좌우 벽(유지) + 위아래 벽(유지) + 피카츄 2마리(4벽 시계방향 순환) + 피카츄 자기력선 + 썬더 라이더 모드.
+            hpEnterRatio: 0.33,
+            pikachus: {
+                count: 2,
+                radius: 16,
+                color: 0xffee44,           // 피카츄 노랑
+                strokeColor: 0x333333,
+                orbitSpeed: 240,            // px/s (화면 둘레 2560 → 한 바퀴 ~10.7초)
+                contactDamage: 1,
+                // 시작 위치: 화면 둘레(perimeter) 기준 진행률 s. 좌상=0, 우상=W, 우하=W+H, 좌하=2W+H
+                // 두 마리는 대각 반대편 (0 vs W+H)
+                initialProgressRatios: [0, 0.5],
+            },
+            pikachuWeb: {
+                lineWidth: 2,
+                lineColor: 0xffee44,        // 피카츄 노랑
+                lineAlpha: 0.75,
+                contactDamage: 1,
+            },
+            thunderRider: {
+                speed: 120,                 // 자기력선 위 이동 속도 (px/s)
+                switchCooldownMs: 1000,     // 갈아탄 뒤 이 시간 동안 다른 선 갈아타기 금지
+                proximityThreshold: 4,      // 다른 선과 이 거리 이내면 교차로 간주 (px)
+                fireIntervalMs: 1000,       // 8방향 미사일 주기
+                bullet: {
+                    radius: 5,
+                    color: 0xffee44,
+                    strokeColor: 0xfff8b0,
+                    speed: 180,
+                    damage: 1,
+                },
+            },
         },
     ],
     interludes: [
@@ -149,6 +185,24 @@ const ThunderData = {
                 },
                 // 위아래 벽 사전 소환. 좌우 벽은 페이즈1부터 유지.
                 laserWall: ThunderLaserWallSpec,
+            },
+        },
+        {
+            name: 'thunder_phase3_transition',
+            spec: {
+                type: 'thunderPhase3',
+                durationMs: 4500,
+                // 찌리리공 2마리 자폭 (자포코일 자폭 로직과 동일 형태 재사용)
+                voltorbSelfDestruct: {
+                    warnMs: 2000,
+                    burstBullets: 90,
+                    burstBullet: {
+                        radius: 3,
+                        color: 0xffffdd,
+                        speed: 140,
+                        damage: 1,
+                    },
+                },
             },
         },
     ],

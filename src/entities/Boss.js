@@ -227,6 +227,15 @@ class Boss {
         if (phase.edgeFields && this.scene.startEdgeFields) {
             this.scene.startEdgeFields(phase.edgeFields);
         }
+        if (phase.pikachus && this.scene.spawnPikachus) {
+            this.scene.spawnPikachus(phase.pikachus);
+        }
+        if (phase.pikachuWeb && this.scene.startPikachuWeb) {
+            this.scene.startPikachuWeb(phase.pikachuWeb);
+        }
+        if (phase.thunderRider && this.scene.startThunderRider) {
+            this.scene.startThunderRider(phase.thunderRider);
+        }
         if (this.data.id === 'freezer' && index === 1 && this.scene.startFreezerWind) {
             this.scene.startFreezerWind();
         }

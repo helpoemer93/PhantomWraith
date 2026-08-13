@@ -1,3 +1,11 @@
+// 개발 환경 여부: localhost·127.0.0.1일 때만 봇/무적/위험맵 토글 활성화.
+// GitHub Pages 등 배포 환경에선 자동 비활성화.
+function isDevEnvironment() {
+    if (typeof window === 'undefined' || !window.location) return true;
+    const h = window.location.hostname;
+    return h === 'localhost' || h === '127.0.0.1' || h === '';
+}
+
 // 점 (px, py)에서 선분 (x1,y1)-(x2,y2)까지 최단 거리 제곱
 function pointSegDistSq(px, py, x1, y1, x2, y2) {
     const dx = x2 - x1, dy = y2 - y1;
@@ -117,6 +125,13 @@ class GameScene extends Phaser.Scene {
         this.edgeFieldsGraphics = null;
         this.voltorbs = [];
         this.voltorbSpec = null;
+        // 썬더 페이즈3: 피카츄 2마리 + 자기력선 + 썬더 라이더 모드
+        this.pikachus = [];
+        this.pikachuSpec = null;
+        this.pikachuWebSpec = null;
+        this.pikachuWebGraphics = null;
+        this.thunderRider = null;
+        this.thunderRiderSpec = null;
         this.currentInterlude = null;
         this.interludeStartTime = 0;
         this.interludeFrozen = false;
@@ -306,8 +321,20 @@ class GameScene extends Phaser.Scene {
         this.updateUI();
 
         this.dangerMap = new DangerMap(this, {});
-        this.dangerToggleKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.G);
-        this.botToggleKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.B);
+        // 개발 환경(localhost)에서만 봇/무적/위험맵 토글 활성화. 배포 환경(GitHub Pages 등)에선 자동 비활성화.
+        this.devMode = isDevEnvironment();
+        if (this.devMode) {
+            this.dangerToggleKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.G);
+            this.botToggleKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.B);
+            this.invincibleToggleKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.V);
+            this.invincibleUI = this.add.text(10, 10, '', {
+                fontSize: '12px', color: '#ffee44', fontStyle: 'bold',
+            }).setOrigin(0, 0).setDepth(100);
+            this.botUI = this.add.text(GameConfig.GAME_WIDTH - 10, 10, '', {
+                fontSize: '11px', color: '#88ffcc', align: 'right',
+            }).setOrigin(1, 0);
+        }
+        this.invincibleMode = false;
         this.botMode = false;
         this.botOriginalKeys1 = null;
         this.botOriginalKeys2 = null;
@@ -315,9 +342,6 @@ class GameScene extends Phaser.Scene {
         this.bot2 = null;
         this.botLastSwapTime = 0;
         this.botSwapCooldownMs = 300;
-        this.botUI = this.add.text(GameConfig.GAME_WIDTH - 10, 10, '', {
-            fontSize: '11px', color: '#88ffcc', align: 'right',
-        }).setOrigin(1, 0);
         this.botSwapCount = 0;
         this.botLog = [];
         this.botLogMaxFrames = 300; // 약 5초 (60fps 기준)
@@ -366,6 +390,12 @@ class GameScene extends Phaser.Scene {
         }
         if (this.botToggleKey && Phaser.Input.Keyboard.JustDown(this.botToggleKey)) {
             this.toggleBotMode();
+        }
+        if (this.invincibleToggleKey && Phaser.Input.Keyboard.JustDown(this.invincibleToggleKey)) {
+            this.invincibleMode = !this.invincibleMode;
+            if (this.player1) this.player1.setInvincible(this.invincibleMode);
+            if (this.player2) this.player2.setInvincible(this.invincibleMode);
+            if (this.invincibleUI) this.invincibleUI.setText(this.invincibleMode ? '무적 (V)' : '');
         }
         if (this.dangerMap && (this.botMode || this.dangerMap.visible)) {
             const staticHazards = [];
@@ -598,6 +628,9 @@ class GameScene extends Phaser.Scene {
         this.updateMagneticWeb(time);
         this.updateEdgeFields(time);
         this.updateVoltorbs(time, delta);
+        this.updatePikachus(time, delta);
+        this.updatePikachuWeb(time);
+        this.updateThunderRider(time, delta);
         this.updateBossBulletSideMotion();
         this.updateBladeMissiles(time);
         this.updateDeceleratingBullets(delta);
@@ -3087,6 +3120,25 @@ class GameScene extends Phaser.Scene {
 
     // ===== 썬더 페이즈1→2 인터루드 =====
     // 자포코일 자폭 예약 + 모든 코일 즉시 파괴 (그물망도 함께 사라짐) + 위아래 벽 사전 소환.
+    // 페이즈2→3 인터루드: 찌리리공 2마리 자폭 (자포코일 자폭과 동일 형태)
+    startThunderPhase3Interlude(spec) {
+        const sd = spec.voltorbSelfDestruct ?? {};
+        // 찌리리공 각각 warn 상태로 강제 전환 → warnMs 뒤 fireVoltorbBurst 실행
+        // updateVoltorbs가 v.state === 'warn'일 때 warn 오버레이 상승 후 발사하는 로직을 이미 가짐.
+        // 여기선 발사 후 이동 재개 대신 인터루드 종료 시 destroyVoltorbs로 완전 정리됨.
+        for (const v of this.voltorbs) {
+            if (!v.sprite || !v.sprite.active) continue;
+            v.state = 'warn';
+            v.warnStartTime = this.time.now;
+        }
+        // voltorbSpec의 warn·burst 값을 임시로 오버라이드해 인터루드 지정값 사용
+        if (this.voltorbSpec) {
+            this.voltorbSpec.burstWarnMs = sd.warnMs ?? 2000;
+            this.voltorbSpec.burstBullets = sd.burstBullets ?? 90;
+            this.voltorbSpec.burstBullet = sd.burstBullet ?? this.voltorbSpec.burstBullet;
+        }
+    }
+
     startThunderPhase2Interlude(spec) {
         // 자포코일 자폭 상태 진입 (경고 → 사방 90발 → 파괴)
         if (this.magneton) {
@@ -3223,6 +3275,265 @@ class GameScene extends Phaser.Scene {
             const vy = Math.sin(angle) * (bs.speed ?? 140);
             const b = this.spawnColoredCircleBullet(x, y, vx, vy, bs.radius ?? 3, bs.color ?? 0xffffdd);
             b.damage = bs.damage ?? 1;
+        }
+    }
+
+    // ===== 썬더 페이즈3 피카츄 (4벽 시계방향 순환) =====
+    // 진행률 s ∈ [0, perimeter). 좌상=0, 우상=W, 우하=W+H, 좌하=2W+H, 다시 좌상=2W+2H
+    perimeterPointFromProgress(s) {
+        const W = GameConfig.GAME_WIDTH;
+        const H = GameConfig.GAME_HEIGHT;
+        const P = 2 * (W + H);
+        let u = ((s % P) + P) % P;
+        if (u < W) return { x: u, y: 0 };
+        u -= W;
+        if (u < H) return { x: W, y: u };
+        u -= H;
+        if (u < W) return { x: W - u, y: H };
+        u -= W;
+        return { x: 0, y: H - u };
+    }
+
+    spawnPikachus(spec) {
+        this.destroyPikachus();
+        this.pikachuSpec = spec;
+        const W = GameConfig.GAME_WIDTH;
+        const H = GameConfig.GAME_HEIGHT;
+        const P = 2 * (W + H);
+        const ratios = spec.initialProgressRatios ?? [0, 0.5];
+        for (let i = 0; i < (spec.count ?? 2); i += 1) {
+            const s0 = P * (ratios[i % ratios.length] ?? 0);
+            const p = this.perimeterPointFromProgress(s0);
+            const useSprite = spec.spriteKey && this.textures.exists(spec.spriteKey + '-sprite');
+            let obj;
+            if (useSprite) {
+                obj = this.add.sprite(p.x, p.y, spec.spriteKey + '-sprite');
+                obj.setDisplaySize(spec.radius * 2, spec.radius * 2);
+            } else {
+                obj = this.add.circle(p.x, p.y, spec.radius, spec.color ?? 0xffee44);
+                obj.setStrokeStyle(2, spec.strokeColor ?? 0x333333);
+            }
+            this.pikachus.push({ sprite: obj, progress: s0, radius: spec.radius });
+        }
+    }
+
+    destroyPikachus() {
+        for (const pk of this.pikachus) {
+            if (pk.sprite) pk.sprite.destroy();
+        }
+        this.pikachus = [];
+        this.pikachuSpec = null;
+    }
+
+    updatePikachus(time, delta) {
+        if (!this.pikachuSpec || this.pikachus.length === 0) return;
+        const spec = this.pikachuSpec;
+        const dt = delta / 1000;
+        const step = (spec.orbitSpeed ?? 240) * dt;
+        for (const pk of this.pikachus) {
+            if (!pk.sprite || !pk.sprite.active) continue;
+            pk.progress += step;
+            const p = this.perimeterPointFromProgress(pk.progress);
+            pk.sprite.x = p.x;
+            pk.sprite.y = p.y;
+            // 접촉 데미지
+            for (const pl of [this.player1, this.player2]) {
+                if (!pl || !pl.sprite || !pl.sprite.active || pl.isInvincible) continue;
+                const dx = pl.sprite.x - pk.sprite.x;
+                const dy = pl.sprite.y - pk.sprite.y;
+                const rr = pk.radius + pl.size / 2;
+                if (dx * dx + dy * dy <= rr * rr) {
+                    this.onBossBodyHit(pl);
+                    break;
+                }
+            }
+        }
+    }
+
+    // ===== 피카츄 자기력선 (두 피카츄 잇는 노란 선) =====
+    startPikachuWeb(spec) {
+        this.pikachuWebSpec = spec;
+        if (!this.pikachuWebGraphics) {
+            this.pikachuWebGraphics = this.add.graphics();
+            this.pikachuWebGraphics.setDepth(-1);
+        }
+    }
+
+    destroyPikachuWeb() {
+        if (this.pikachuWebGraphics) {
+            this.pikachuWebGraphics.clear();
+        }
+        this.pikachuWebSpec = null;
+    }
+
+    updatePikachuWeb(time) {
+        if (!this.pikachuWebSpec || !this.pikachuWebGraphics) return;
+        if (this.pikachus.length < 2) {
+            this.pikachuWebGraphics.clear();
+            return;
+        }
+        const spec = this.pikachuWebSpec;
+        const g = this.pikachuWebGraphics;
+        g.clear();
+        g.lineStyle(spec.lineWidth ?? 2, spec.lineColor ?? 0xffee44, spec.lineAlpha ?? 0.75);
+        const a = this.pikachus[0].sprite;
+        const b = this.pikachus[1].sprite;
+        if (!a || !b || !a.active || !b.active) return;
+        g.beginPath();
+        g.moveTo(a.x, a.y);
+        g.lineTo(b.x, b.y);
+        g.strokePath();
+        // 선분 접촉 데미지
+        const thr = 3;
+        for (const pl of [this.player1, this.player2]) {
+            if (!pl || !pl.sprite || !pl.sprite.active || pl.isInvincible) continue;
+            const pr = pl.size / 2;
+            const d2 = pointSegDistSq(pl.sprite.x, pl.sprite.y, a.x, a.y, b.x, b.y);
+            const lim = pr + thr;
+            if (d2 <= lim * lim) {
+                this.onBossBodyHit(pl);
+                break;
+            }
+        }
+    }
+
+    // ===== 썬더 라이더 모드 (자기력선 위 이동 + 8방향 미사일) =====
+    // 자기력선 3종: 좌우 이동벽(세로선), 위아래 이동벽(가로선), 피카츄 자기력선(임의 각도).
+    // 각 선은 (x1,y1)-(x2,y2) 선분. 라이더는 선 위 진행률 t∈[0,1]로 위치.
+    // 다른 선과 최단거리 threshold 이내면 그 선으로 갈아탐. 갈아탄 뒤 switchCooldownMs 동안 갈아타기 금지.
+    getElectricLines() {
+        const W = GameConfig.GAME_WIDTH;
+        const H = GameConfig.GAME_HEIGHT;
+        const lines = [];
+        if (this.laserWallH) {
+            lines.push({ id: 'wallV', x1: this.laserWallH.x, y1: 0, x2: this.laserWallH.x, y2: H });
+        }
+        if (this.laserWall) {
+            lines.push({ id: 'wallH', x1: 0, y1: this.laserWall.y, x2: W, y2: this.laserWall.y });
+        }
+        if (this.pikachus.length >= 2 && this.pikachus[0].sprite && this.pikachus[1].sprite) {
+            const a = this.pikachus[0].sprite;
+            const b = this.pikachus[1].sprite;
+            lines.push({ id: 'pikachuWeb', x1: a.x, y1: a.y, x2: b.x, y2: b.y });
+        }
+        return lines;
+    }
+
+    // 점 (px,py)를 선분 (x1,y1)-(x2,y2)에 투영. 반환: {x,y,t,dist2} (t 클램프됨)
+    projectOnSegment(px, py, x1, y1, x2, y2) {
+        const dx = x2 - x1;
+        const dy = y2 - y1;
+        const len2 = dx * dx + dy * dy;
+        if (len2 < 1e-6) return { x: x1, y: y1, t: 0, dist2: (px - x1) ** 2 + (py - y1) ** 2 };
+        let t = ((px - x1) * dx + (py - y1) * dy) / len2;
+        t = Math.max(0, Math.min(1, t));
+        const x = x1 + t * dx;
+        const y = y1 + t * dy;
+        return { x, y, t, dist2: (px - x) ** 2 + (py - y) ** 2 };
+    }
+
+    startThunderRider(spec) {
+        this.thunderRiderSpec = spec;
+        // 썬더 자체 이동 정지 (라이더 로직이 위치 담당)
+        if (this.boss) this.boss.movementFrozen = true;
+        const boss = this.boss;
+        if (!boss || !boss.sprite) return;
+        // 가장 가까운 선에 스냅
+        const lines = this.getElectricLines();
+        if (lines.length === 0) return;
+        let best = null;
+        for (const ln of lines) {
+            const pr = this.projectOnSegment(boss.sprite.x, boss.sprite.y, ln.x1, ln.y1, ln.x2, ln.y2);
+            if (!best || pr.dist2 < best.pr.dist2) best = { ln, pr };
+        }
+        boss.sprite.x = best.pr.x;
+        boss.sprite.y = best.pr.y;
+        this.thunderRider = {
+            lineId: best.ln.id,
+            t: best.pr.t,
+            // 진행 방향: +1 = (x1,y1)→(x2,y2) 방향. 초기값 +1 (t가 1에 가까우면 -1).
+            dir: (best.pr.t > 0.5 ? -1 : 1),
+            switchCooldownEnd: 0,
+            lastFireTime: this.time.now,
+        };
+    }
+
+    stopThunderRider() {
+        this.thunderRider = null;
+        this.thunderRiderSpec = null;
+        if (this.boss) this.boss.movementFrozen = false;
+    }
+
+    updateThunderRider(time, delta) {
+        if (!this.thunderRider || !this.thunderRiderSpec || !this.boss || !this.boss.sprite) return;
+        const spec = this.thunderRiderSpec;
+        const dt = delta / 1000;
+        const lines = this.getElectricLines();
+        let cur = lines.find((l) => l.id === this.thunderRider.lineId);
+        // 현재 선이 사라졌으면 (예: 벽 destroy) 가장 가까운 선으로 재스냅
+        if (!cur) {
+            if (lines.length === 0) return;
+            let best = null;
+            for (const ln of lines) {
+                const pr = this.projectOnSegment(this.boss.sprite.x, this.boss.sprite.y, ln.x1, ln.y1, ln.x2, ln.y2);
+                if (!best || pr.dist2 < best.pr.dist2) best = { ln, pr };
+            }
+            cur = best.ln;
+            this.thunderRider.lineId = cur.id;
+            this.thunderRider.t = best.pr.t;
+            this.thunderRider.dir = (best.pr.t > 0.5 ? -1 : 1);
+        }
+        // 이동: 선의 실제 길이로 dt 진행
+        const dx = cur.x2 - cur.x1;
+        const dy = cur.y2 - cur.y1;
+        const lineLen = Math.hypot(dx, dy);
+        if (lineLen > 0.01) {
+            const dtStep = (spec.speed ?? 120) * dt / lineLen;
+            this.thunderRider.t += this.thunderRider.dir * dtStep;
+            // 끝 도달 시 반전
+            if (this.thunderRider.t >= 1) { this.thunderRider.t = 1; this.thunderRider.dir = -1; }
+            else if (this.thunderRider.t <= 0) { this.thunderRider.t = 0; this.thunderRider.dir = 1; }
+        }
+        // 새 위치
+        const nx = cur.x1 + this.thunderRider.t * dx;
+        const ny = cur.y1 + this.thunderRider.t * dy;
+        this.boss.sprite.x = nx;
+        this.boss.sprite.y = ny;
+        // 갈아타기: 쿨다운 만료 & 다른 선 임계값 이내면 갈아탐
+        if (time >= this.thunderRider.switchCooldownEnd) {
+            const thr = spec.proximityThreshold ?? 4;
+            const thr2 = thr * thr;
+            for (const ln of lines) {
+                if (ln.id === cur.id) continue;
+                const pr = this.projectOnSegment(nx, ny, ln.x1, ln.y1, ln.x2, ln.y2);
+                if (pr.dist2 <= thr2) {
+                    // 갈아탐
+                    this.boss.sprite.x = pr.x;
+                    this.boss.sprite.y = pr.y;
+                    this.thunderRider.lineId = ln.id;
+                    this.thunderRider.t = pr.t;
+                    this.thunderRider.dir = (pr.t > 0.5 ? -1 : 1);
+                    this.thunderRider.switchCooldownEnd = time + (spec.switchCooldownMs ?? 1000);
+                    break;
+                }
+            }
+        }
+        // 8방향 미사일 발사
+        if (time - this.thunderRider.lastFireTime >= (spec.fireIntervalMs ?? 1000)) {
+            this.fireThunderRiderBurst(this.boss.sprite.x, this.boss.sprite.y, spec.bullet);
+            this.thunderRider.lastFireTime = time;
+        }
+    }
+
+    fireThunderRiderBurst(x, y, bs) {
+        const bullet = bs ?? { radius: 5, color: 0xffee44, speed: 180, damage: 1 };
+        for (let i = 0; i < 8; i += 1) {
+            const angle = (i / 8) * Math.PI * 2;
+            const vx = Math.cos(angle) * (bullet.speed ?? 180);
+            const vy = Math.sin(angle) * (bullet.speed ?? 180);
+            const b = this.spawnColoredCircleBullet(x, y, vx, vy, bullet.radius ?? 5, bullet.color ?? 0xffee44);
+            if (bullet.strokeColor !== undefined) b.setStrokeStyle(1, bullet.strokeColor);
+            b.damage = bullet.damage ?? 1;
         }
     }
 
@@ -3427,6 +3738,13 @@ class GameScene extends Phaser.Scene {
             this.interludeFrozen = false;
             return;
         }
+        if (inter.spec.type === 'thunderPhase3') {
+            this.startThunderPhase3Interlude(inter.spec);
+            this.currentInterlude = inter;
+            this.interludeStartTime = this.time.now;
+            this.interludeFrozen = false;
+            return;
+        }
         this.currentInterlude = inter;
         this.interludeStartTime = this.time.now;
         this.interludeFrozen = false;
@@ -3456,6 +3774,9 @@ class GameScene extends Phaser.Scene {
                 this.destroyMagneton();
                 this.destroyCoils();
                 this.destroyEdgeFields();
+            } else if (spec.type === 'thunderPhase3') {
+                // 인터루드 종료 시 찌리리공 완전 정리 (페이즈3엔 존재 안 함)
+                this.destroyVoltorbs();
             }
             this.currentInterlude = null;
             this.interludeFrozen = false;
