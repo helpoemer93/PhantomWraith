@@ -131,9 +131,11 @@ const ThunderData = {
             pikachus: {
                 count: 2,
                 radius: 16,
-                color: 0xffee44,           // 피카츄 노랑
+                spriteKey: 'pikachu-tumble',   // Tumble-Anim 재포장 (40×40 6프레임, 데굴데굴)
+                animKey: 'pikachu-tumble-roll',
+                color: 0xffee44,               // fallback (스프라이트 없을 때)
                 strokeColor: 0x333333,
-                orbitSpeed: 240,            // px/s (화면 둘레 2560 → 한 바퀴 ~10.7초)
+                orbitSpeed: 240,               // px/s (화면 둘레 2560 → 한 바퀴 ~10.7초)
                 contactDamage: 1,
                 // 시작 위치: 화면 둘레(perimeter) 기준 진행률 s. 좌상=0, 우상=W, 우하=W+H, 좌하=2W+H
                 // 두 마리는 대각 반대편 (0 vs W+H)

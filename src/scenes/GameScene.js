@@ -3294,6 +3294,51 @@ class GameScene extends Phaser.Scene {
         return { x: 0, y: H - u };
     }
 
+    // 4벽 진행 방향 벡터 (시계방향 순환). rotation 계산용.
+    // 상변→오른쪽, 우변→아래, 하변→왼쪽, 좌변→위.
+    perimeterDirectionFromProgress(s) {
+        const W = GameConfig.GAME_WIDTH;
+        const H = GameConfig.GAME_HEIGHT;
+        const P = 2 * (W + H);
+        let u = ((s % P) + P) % P;
+        if (u < W) return { dx: 1, dy: 0 };
+        u -= W;
+        if (u < H) return { dx: 0, dy: 1 };
+        u -= H;
+        if (u < W) return { dx: -1, dy: 0 };
+        return { dx: 0, dy: -1 };
+    }
+
+    // 피카츄 굴러가는 anim (Tumble 6프레임) lazy 등록
+    ensurePikachuAnims() {
+        if (this._pikachuAnimsReady) return;
+        if (this.textures.exists('pikachu-tumble-sprite') && !this.anims.exists('pikachu-tumble-roll')) {
+            this.anims.create({
+                key: 'pikachu-tumble-roll',
+                frames: this.anims.generateFrameNumbers('pikachu-tumble-sprite', { start: 0, end: 5 }),
+                frameRate: 14,
+                repeat: -1,
+            });
+        }
+        this._pikachuAnimsReady = true;
+    }
+
+    // 썬더 8방향 anim (thunder-dir8-sprite, 4프레임 × 8방향) lazy 등록
+    ensureThunderDir8Anims() {
+        if (this._thunderDir8AnimsReady) return;
+        if (this.textures.exists('thunder-dir8-sprite') && !this.anims.exists('thunder-dir-0')) {
+            for (let d = 0; d < 8; d += 1) {
+                this.anims.create({
+                    key: `thunder-dir-${d}`,
+                    frames: this.anims.generateFrameNumbers('thunder-dir8-sprite', { start: d * 4, end: d * 4 + 3 }),
+                    frameRate: 6,
+                    repeat: -1,
+                });
+            }
+        }
+        this._thunderDir8AnimsReady = true;
+    }
+
     spawnPikachus(spec) {
         this.destroyPikachus();
         this.pikachuSpec = spec;
@@ -3301,14 +3346,17 @@ class GameScene extends Phaser.Scene {
         const H = GameConfig.GAME_HEIGHT;
         const P = 2 * (W + H);
         const ratios = spec.initialProgressRatios ?? [0, 0.5];
+        const useSprite = spec.spriteKey && this.textures.exists(spec.spriteKey + '-sprite');
+        if (useSprite) this.ensurePikachuAnims();
         for (let i = 0; i < (spec.count ?? 2); i += 1) {
             const s0 = P * (ratios[i % ratios.length] ?? 0);
             const p = this.perimeterPointFromProgress(s0);
-            const useSprite = spec.spriteKey && this.textures.exists(spec.spriteKey + '-sprite');
             let obj;
             if (useSprite) {
                 obj = this.add.sprite(p.x, p.y, spec.spriteKey + '-sprite');
                 obj.setDisplaySize(spec.radius * 2, spec.radius * 2);
+                const animKey = spec.animKey ?? 'pikachu-tumble-roll';
+                if (this.anims.exists(animKey)) obj.play(animKey);
             } else {
                 obj = this.add.circle(p.x, p.y, spec.radius, spec.color ?? 0xffee44);
                 obj.setStrokeStyle(2, spec.strokeColor ?? 0x333333);
@@ -3336,6 +3384,11 @@ class GameScene extends Phaser.Scene {
             const p = this.perimeterPointFromProgress(pk.progress);
             pk.sprite.x = p.x;
             pk.sprite.y = p.y;
+            // 진행 방향 → sprite rotation (Tumble은 오른쪽 진행 기준이므로 그대로 atan2)
+            if (pk.sprite.setRotation) {
+                const dir = this.perimeterDirectionFromProgress(pk.progress);
+                pk.sprite.setRotation(Math.atan2(dir.dy, dir.dx));
+            }
             // 접촉 데미지
             for (const pl of [this.player1, this.player2]) {
                 if (!pl || !pl.sprite || !pl.sprite.active || pl.isInvincible) continue;
@@ -3438,6 +3491,14 @@ class GameScene extends Phaser.Scene {
         if (this.boss) this.boss.movementFrozen = true;
         const boss = this.boss;
         if (!boss || !boss.sprite) return;
+        // 텍스처를 8방향 시트로 스왑 (기존 정면 idle → 방향별 anim 지원)
+        if (this.textures.exists('thunder-dir8-sprite') && boss.sprite.setTexture) {
+            this.ensureThunderDir8Anims();
+            const bossSize = boss.data?.size ?? 80;
+            boss.sprite.setTexture('thunder-dir8-sprite');
+            boss.sprite.setDisplaySize(bossSize, bossSize);
+            if (this.anims.exists('thunder-dir-0')) boss.sprite.play('thunder-dir-0');
+        }
         // 가장 가까운 선에 스냅
         const lines = this.getElectricLines();
         if (lines.length === 0) return;
@@ -3497,8 +3558,17 @@ class GameScene extends Phaser.Scene {
         // 새 위치
         const nx = cur.x1 + this.thunderRider.t * dx;
         const ny = cur.y1 + this.thunderRider.t * dy;
+        const oldX = this.boss.sprite.x;
+        const oldY = this.boss.sprite.y;
         this.boss.sprite.x = nx;
         this.boss.sprite.y = ny;
+        // 방향 anim: 이동 벡터 → 8방향 인덱스
+        const mvx = nx - oldX;
+        const mvy = ny - oldY;
+        if ((Math.abs(mvx) > 0.01 || Math.abs(mvy) > 0.01) && this.anims.exists('thunder-dir-0')) {
+            const dirIdx = this.angleToDir8(mvx, mvy);
+            this.playDirAnim(this.boss.sprite, `thunder-dir-${dirIdx}`);
+        }
         // 갈아타기: 쿨다운 만료 & 다른 선 임계값 이내면 갈아탐
         if (time >= this.thunderRider.switchCooldownEnd) {
             const thr = spec.proximityThreshold ?? 4;
