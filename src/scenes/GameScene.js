@@ -3120,22 +3120,13 @@ class GameScene extends Phaser.Scene {
 
     // ===== 썬더 페이즈1→2 인터루드 =====
     // 자포코일 자폭 예약 + 모든 코일 즉시 파괴 (그물망도 함께 사라짐) + 위아래 벽 사전 소환.
-    // 페이즈2→3 인터루드: 찌리리공 2마리 자폭 (자포코일 자폭과 동일 형태)
+    // 페이즈2→3 인터루드: 찌리리공 2마리가 벽 튕김을 그만두고 관성대로 화면 밖으로 이탈
     startThunderPhase3Interlude(spec) {
-        const sd = spec.voltorbSelfDestruct ?? {};
-        // 찌리리공 각각 warn 상태로 강제 전환 → warnMs 뒤 fireVoltorbBurst 실행
-        // updateVoltorbs가 v.state === 'warn'일 때 warn 오버레이 상승 후 발사하는 로직을 이미 가짐.
-        // 여기선 발사 후 이동 재개 대신 인터루드 종료 시 destroyVoltorbs로 완전 정리됨.
         for (const v of this.voltorbs) {
             if (!v.sprite || !v.sprite.active) continue;
-            v.state = 'warn';
-            v.warnStartTime = this.time.now;
-        }
-        // voltorbSpec의 warn·burst 값을 임시로 오버라이드해 인터루드 지정값 사용
-        if (this.voltorbSpec) {
-            this.voltorbSpec.burstWarnMs = sd.warnMs ?? 2000;
-            this.voltorbSpec.burstBullets = sd.burstBullets ?? 90;
-            this.voltorbSpec.burstBullet = sd.burstBullet ?? this.voltorbSpec.burstBullet;
+            v.escape = true;
+            v.state = 'move';         // warn 진입 방지
+            if (v.overlay) v.overlay.setAlpha(0);
         }
     }
 
@@ -3224,6 +3215,19 @@ class GameScene extends Phaser.Scene {
 
         for (const v of this.voltorbs) {
             if (!v.sprite || !v.sprite.active) continue;
+            if (v.escape) {
+                // 이탈 모드: 벽 튕김 없이 관성 유지, 화면 밖 완전히 벗어나면 개별 destroy
+                v.sprite.x += v.vx * dt;
+                v.sprite.y += v.vy * dt;
+                if (v.overlay) { v.overlay.x = v.sprite.x; v.overlay.y = v.sprite.y; }
+                const margin = r + 4;
+                if (v.sprite.x < -margin || v.sprite.x > GameConfig.GAME_WIDTH + margin ||
+                    v.sprite.y < -margin || v.sprite.y > GameConfig.GAME_HEIGHT + margin) {
+                    if (v.overlay) v.overlay.destroy();
+                    v.sprite.destroy();
+                }
+                continue;
+            }
             if (v.state === 'warn') {
                 // 경고 중: 정지, 오버레이 알파 상승. warnMs 경과 → 발사 → 이동 재개
                 const t = Math.min(1, (time - v.warnStartTime) / warnMs);
@@ -3279,26 +3283,26 @@ class GameScene extends Phaser.Scene {
     }
 
     // ===== 썬더 페이즈3 피카츄 (4벽 시계방향 순환) =====
-    // 진행률 s ∈ [0, perimeter). 좌상=0, 우상=W, 우하=W+H, 좌하=2W+H, 다시 좌상=2W+2H
-    perimeterPointFromProgress(s) {
-        const W = GameConfig.GAME_WIDTH;
-        const H = GameConfig.GAME_HEIGHT;
+    // 진행률 s ∈ [0, perimeter). inset만큼 화면 안쪽으로 축소된 사각형 둘레 위 점.
+    perimeterPointFromProgress(s, inset = 0) {
+        const W = GameConfig.GAME_WIDTH - 2 * inset;
+        const H = GameConfig.GAME_HEIGHT - 2 * inset;
         const P = 2 * (W + H);
         let u = ((s % P) + P) % P;
-        if (u < W) return { x: u, y: 0 };
+        if (u < W) return { x: inset + u, y: inset };
         u -= W;
-        if (u < H) return { x: W, y: u };
+        if (u < H) return { x: inset + W, y: inset + u };
         u -= H;
-        if (u < W) return { x: W - u, y: H };
+        if (u < W) return { x: inset + W - u, y: inset + H };
         u -= W;
-        return { x: 0, y: H - u };
+        return { x: inset, y: inset + H - u };
     }
 
     // 4벽 진행 방향 벡터 (시계방향 순환). rotation 계산용.
     // 상변→오른쪽, 우변→아래, 하변→왼쪽, 좌변→위.
-    perimeterDirectionFromProgress(s) {
-        const W = GameConfig.GAME_WIDTH;
-        const H = GameConfig.GAME_HEIGHT;
+    perimeterDirectionFromProgress(s, inset = 0) {
+        const W = GameConfig.GAME_WIDTH - 2 * inset;
+        const H = GameConfig.GAME_HEIGHT - 2 * inset;
         const P = 2 * (W + H);
         let u = ((s % P) + P) % P;
         if (u < W) return { dx: 1, dy: 0 };
@@ -3315,8 +3319,8 @@ class GameScene extends Phaser.Scene {
         if (this.textures.exists('pikachu-tumble-sprite') && !this.anims.exists('pikachu-tumble-roll')) {
             this.anims.create({
                 key: 'pikachu-tumble-roll',
-                frames: this.anims.generateFrameNumbers('pikachu-tumble-sprite', { start: 0, end: 5 }),
-                frameRate: 14,
+                frames: this.anims.generateFrameNumbers('pikachu-tumble-sprite', { start: 0, end: 7 }),
+                frameRate: 16,
                 repeat: -1,
             });
         }
@@ -3342,15 +3346,16 @@ class GameScene extends Phaser.Scene {
     spawnPikachus(spec) {
         this.destroyPikachus();
         this.pikachuSpec = spec;
-        const W = GameConfig.GAME_WIDTH;
-        const H = GameConfig.GAME_HEIGHT;
+        const inset = spec.edgeInset ?? 0;
+        const W = GameConfig.GAME_WIDTH - 2 * inset;
+        const H = GameConfig.GAME_HEIGHT - 2 * inset;
         const P = 2 * (W + H);
         const ratios = spec.initialProgressRatios ?? [0, 0.5];
         const useSprite = spec.spriteKey && this.textures.exists(spec.spriteKey + '-sprite');
         if (useSprite) this.ensurePikachuAnims();
         for (let i = 0; i < (spec.count ?? 2); i += 1) {
             const s0 = P * (ratios[i % ratios.length] ?? 0);
-            const p = this.perimeterPointFromProgress(s0);
+            const p = this.perimeterPointFromProgress(s0, inset);
             let obj;
             if (useSprite) {
                 obj = this.add.sprite(p.x, p.y, spec.spriteKey + '-sprite');
@@ -3378,16 +3383,17 @@ class GameScene extends Phaser.Scene {
         const spec = this.pikachuSpec;
         const dt = delta / 1000;
         const step = (spec.orbitSpeed ?? 240) * dt;
+        const inset = spec.edgeInset ?? 0;
         for (const pk of this.pikachus) {
             if (!pk.sprite || !pk.sprite.active) continue;
             pk.progress += step;
-            const p = this.perimeterPointFromProgress(pk.progress);
+            const p = this.perimeterPointFromProgress(pk.progress, inset);
             pk.sprite.x = p.x;
             pk.sprite.y = p.y;
-            // 진행 방향 → sprite rotation (Tumble은 오른쪽 진행 기준이므로 그대로 atan2)
+            // 진행 방향 → sprite rotation. 원본 Tumble은 앞으로 구르면서 옆 이동 → +90° 시계 오프셋
             if (pk.sprite.setRotation) {
-                const dir = this.perimeterDirectionFromProgress(pk.progress);
-                pk.sprite.setRotation(Math.atan2(dir.dy, dir.dx));
+                const dir = this.perimeterDirectionFromProgress(pk.progress, inset);
+                pk.sprite.setRotation(Math.atan2(dir.dy, dir.dx) + Math.PI / 2);
             }
             // 접촉 데미지
             for (const pl of [this.player1, this.player2]) {

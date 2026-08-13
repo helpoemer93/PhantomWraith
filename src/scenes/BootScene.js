@@ -72,7 +72,7 @@ class BootScene extends Phaser.Scene {
         // 코일(자포코일 부하)은 메타그로스 자폭드론 텍스처(`metagross-chaser`, 8방향×4프레임) 재사용.
         this.load.spritesheet(
             'pikachu-tumble-sprite',
-            'Image/pikachu-tumble-sprite-6f.png',
+            'Image/pikachu-tumble-sprite-8f.png',
             { frameWidth: 40, frameHeight: 40 },
         );
         // 썬더 페이즈3 라이더용 8방향 시트 (4프레임 × 8방향, 표준 순서 [down, down-right, right, up-right, up, up-left, left, down-left])

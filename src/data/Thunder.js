@@ -4,7 +4,7 @@ const ThunderLaserWallHSpec = {
     width: 16,
     color: 0x66ccff,
     strokeColor: 0xccf2ff,
-    speed: 180,
+    speed: 150,
     startX: 440,           // 우측 시작 (왼쪽 캐릭터 반응 유예)
     minX: 40,
     maxX: 440,
@@ -17,7 +17,7 @@ const ThunderLaserWallSpec = {
     height: 16,
     color: 0x66ccff,
     strokeColor: 0xccf2ff,
-    speed: 180,
+    speed: 150,
     startY: 40,
     minY: 40,
     maxY: 760,
@@ -135,10 +135,11 @@ const ThunderData = {
                 animKey: 'pikachu-tumble-roll',
                 color: 0xffee44,               // fallback (스프라이트 없을 때)
                 strokeColor: 0x333333,
-                orbitSpeed: 240,               // px/s (화면 둘레 2560 → 한 바퀴 ~10.7초)
+                orbitSpeed: 240,               // px/s
+                edgeInset: 24,                 // 4벽에서 안쪽으로 들여쓰기 (px). 벽에 붙어서 안 보이는 이슈 해소
                 contactDamage: 1,
-                // 시작 위치: 화면 둘레(perimeter) 기준 진행률 s. 좌상=0, 우상=W, 우하=W+H, 좌하=2W+H
-                // 두 마리는 대각 반대편 (0 vs W+H)
+                // 시작 위치: 축소된 사각형(perimeter) 기준 진행률 s.
+                // 두 마리는 대각 반대편 (0 vs 0.5)
                 initialProgressRatios: [0, 0.5],
             },
             pikachuWeb: {
@@ -156,7 +157,7 @@ const ThunderData = {
                     radius: 5,
                     color: 0xffee44,
                     strokeColor: 0xfff8b0,
-                    speed: 180,
+                    speed: 150,
                     damage: 1,
                 },
             },
@@ -194,17 +195,7 @@ const ThunderData = {
             spec: {
                 type: 'thunderPhase3',
                 durationMs: 4500,
-                // 찌리리공 2마리 자폭 (자포코일 자폭 로직과 동일 형태 재사용)
-                voltorbSelfDestruct: {
-                    warnMs: 2000,
-                    burstBullets: 90,
-                    burstBullet: {
-                        radius: 3,
-                        color: 0xffffdd,
-                        speed: 140,
-                        damage: 1,
-                    },
-                },
+                // 찌리리공은 벽 튕김을 그만두고 관성대로 화면 밖 이탈 (자폭 없음). 로직은 GameScene.startThunderPhase3Interlude.
             },
         },
     ],
