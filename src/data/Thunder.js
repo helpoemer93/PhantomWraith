@@ -4,10 +4,10 @@ const ThunderLaserWallHSpec = {
     width: 16,
     color: 0x66ccff,
     strokeColor: 0xccf2ff,
-    speed: 150,
-    startX: 440,           // 우측 시작 (왼쪽 캐릭터 반응 유예)
-    minX: 40,
-    maxX: 440,
+    speed: 140,
+    startX: 472,           // 우측 시작 (왼쪽 캐릭터 반응 유예)
+    minX: 8,
+    maxX: 472,
     initialDir: -1,        // -1 = 왼쪽으로 시작
     damage: 1,
 };
@@ -17,10 +17,10 @@ const ThunderLaserWallSpec = {
     height: 16,
     color: 0x66ccff,
     strokeColor: 0xccf2ff,
-    speed: 150,
-    startY: 40,
-    minY: 40,
-    maxY: 760,
+    speed: 140,
+    startY: 8,
+    minY: 8,
+    maxY: 792,
     initialDir: 1,
     damage: 1,
 };
@@ -57,7 +57,7 @@ const ThunderData = {
             // 코일 폭발 스폰: 자포코일 위치에서 6방향으로 6마리 동시 발사.
             // 첫 스폰은 자포코일 등장 즉시. 이후 6초마다 반복.
             coilBurstSpawner: {
-                intervalMs: 6000,
+                intervalMs: 7000,
                 immediate: true,
                 // 절대 각도 (codebase: 0=우, 시계방향). 6방향 = 60° 간격, 위/아래 정중앙 제외.
                 // 우중(0), 우하(60), 좌하(120), 좌중(180), 좌상(240), 우상(300)
@@ -65,7 +65,7 @@ const ThunderData = {
                 coil: {
                     radius: 14,
                     moveSpeed: 100,
-                    lifetimeMs: 12000,     // 2세대 공존을 위한 수명
+                    lifetimeMs: 14000,     // 2세대 공존을 위한 수명
                     contactDamage: 1,
                 },
                 // 자기력선: 매 프레임 각 코일이 가장 가까운 K기와 링크 (동적)
@@ -111,7 +111,7 @@ const ThunderData = {
                 moveSpeed: 200,
                 contactDamage: 1,
                 initialAngleDegs: [135, 45],  // [좌하, 우하]
-                burstCycleMs: 6000,
+                burstCycleMs: 7000,
                 burstWarnMs: 2000,
                 burstBullets: 90,
                 burstBullet: {
