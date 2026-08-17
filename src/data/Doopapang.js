@@ -171,7 +171,7 @@ const DoopapangData = {
                 // 이후 3회는 같은 각도로 반복 (무적 이동해도 라인은 첫 방향 유지).
                 // 순차 돌진과 독립 쿨타임 — 병렬로 진행.
                 snipe: {
-                    cycleMs: 6000,          // 사이클 주기 (다음 사이클 시작 시각 기준)
+                    cycleMs: 7000,          // 사이클 주기 (다음 사이클 시작 시각 기준)
                     firstDelayMs: 3000,     // gathering 완료 후 첫 사이클까지 대기
                     volleyCount: 4,         // 4회 발사
                     volleyIntervalMs: 200,  // 발사 사이 텀
@@ -225,9 +225,9 @@ const Doopapang = {
         const scale = Math.pow(1.20, lv - 1);
         d.maxHp = Math.round(d.maxHp * scale);
 
-        // Lv2: 무적저격 사이클 쿨타임 6s → 5s
+        // Lv2: 무적저격 사이클 쿨타임 7s → 6s
         if (lv >= 2) {
-            d.phases[2].doopaGatheredOrbs.snipe.cycleMs = 5000;
+            d.phases[2].doopaGatheredOrbs.snipe.cycleMs = 6000;
         }
         // Lv3: 천장궤도 돌진 2 → 3 (그 중 1개는 일반 상태 캐릭터 최근접 orb)
         if (lv >= 3) {
@@ -250,7 +250,7 @@ const Doopapang = {
     getLevelUpLabels(level) {
         if (level <= 1) return [];
         const labels = ['HP +20%'];
-        if (level === 2) labels.push('무적저격 쿨 6s → 5s');
+        if (level === 2) labels.push('무적저격 쿨 7s → 6s');
         else if (level === 3) labels.push('천장궤도 돌진 2→3 (1개는 일반 상태 캐릭터 최근접)');
         else if (level === 4) labels.push('궤도구체 격발 중 1회는 무적 상태 캐릭터에게도 추가 발사');
         else if (level === 5) labels.push('홀 4→6 (BH·WH 쌍 +1)');

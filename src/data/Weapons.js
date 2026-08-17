@@ -18,7 +18,7 @@ const Weapons = {
         name: '관통탄',
         type: 'linear',
         intervalMs: 400,
-        damage: 3,
+        damage: 2,
         bulletSpeed: 500,
         pierce: true,
         contactCooldownMs: 100,

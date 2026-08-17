@@ -985,6 +985,9 @@ class GameScene extends Phaser.Scene {
         b.pierce = w.pierce;
         b.contactCooldownMs = w.contactCooldownMs ?? 200;
         b.lastHitTargetTime = -Infinity;
+        // 부메랑 전용: 방향당 타겟별 1히트를 위해 Set 트래킹 사용.
+        // tryPierceHit에서 이 Set 존재 시 contactCooldownMs 대신 Set 검사.
+        b.hitTargetsSet = new Set();
         b.isBoomerang = true;
         b.boomerangPhase = 'out';
         b.boomerangSpec = w;
@@ -1003,6 +1006,7 @@ class GameScene extends Phaser.Scene {
                     b.body.setVelocityY(w.bulletSpeed * (w.returnSpeedMul ?? 1.5));
                     b.damage = w.damage * (w.returnDamageMul ?? 1.5);
                     b.lastHitTargetTime = -Infinity; // 같은 대상 재히트 허용
+                    if (b.hitTargetsSet) b.hitTargetsSet.clear(); // 회귀 방향 히트셋 리셋
                 }
             } else if (b.boomerangPhase === 'return') {
                 // 오너 캐릭터가 잡으면: 쿨타임 이득 + 소멸
@@ -1902,10 +1906,7 @@ class GameScene extends Phaser.Scene {
     onSpiralOrbShot(orb, bullet) {
         if (!orb.active || orb.hp <= 0) return;
         if (bullet.pierce) {
-            const time = this.time.now;
-            const cd = bullet.contactCooldownMs ?? 0;
-            if (time - (bullet.lastHitTargetTime ?? -Infinity) < cd) return;
-            bullet.lastHitTargetTime = time;
+            if (!this.tryPierceHit(bullet, orb)) return;
             orb.hp -= bullet.damage ?? 1;
         } else {
             orb.hp -= bullet.damage ?? 1;
@@ -4083,15 +4084,28 @@ class GameScene extends Phaser.Scene {
         return 1.0;
     }
 
+    // 관통탄 히트 허가 판정 (허가 시 true, 이미 히트/쿨다운 중이면 false).
+    // - bullet.hitTargetsSet 있으면 타겟 참조 기반 Set 트래킹 (부메랑 방식): 타겟당 1히트.
+    // - 없으면 기존 bullet.lastHitTargetTime + contactCooldownMs 시간 기반.
+    tryPierceHit(bullet, target) {
+        if (bullet.hitTargetsSet) {
+            if (bullet.hitTargetsSet.has(target)) return false;
+            bullet.hitTargetsSet.add(target);
+            return true;
+        }
+        const time = this.time.now;
+        const cd = bullet.contactCooldownMs ?? 0;
+        if (time - (bullet.lastHitTargetTime ?? -Infinity) < cd) return false;
+        bullet.lastHitTargetTime = time;
+        return true;
+    }
+
     onBossHit(bullet) {
         if (this.boss.isDead()) return;
         const mult = this.bossDamageMultiplier();
         const dmg = (bullet.damage ?? 1) * mult;
         if (bullet.pierce) {
-            const time = this.time.now;
-            const cd = bullet.contactCooldownMs ?? 0;
-            if (time - (bullet.lastHitTargetTime ?? -Infinity) < cd) return;
-            bullet.lastHitTargetTime = time;
+            if (!this.tryPierceHit(bullet, this.boss)) return;
             this.boss.onHit(dmg);
         } else {
             this.boss.onHit(dmg);
@@ -4113,10 +4127,7 @@ class GameScene extends Phaser.Scene {
         if (!this.boss || this.boss.isDead()) return;
         const dmg = bullet.damage ?? 1;
         if (bullet.pierce) {
-            const time = this.time.now;
-            const cd = bullet.contactCooldownMs ?? 0;
-            if (time - (bullet.lastHitTargetTime ?? -Infinity) < cd) return;
-            bullet.lastHitTargetTime = time;
+            if (!this.tryPierceHit(bullet, raikou)) return;
             this.boss.onHit(dmg);
         } else {
             this.boss.onHit(dmg);
@@ -4661,10 +4672,7 @@ class GameScene extends Phaser.Scene {
             return;
         }
         if (bullet.pierce) {
-            const time = this.time.now;
-            const cd = bullet.contactCooldownMs ?? 0;
-            if (time - (bullet.lastHitTargetTime ?? -Infinity) < cd) return;
-            bullet.lastHitTargetTime = time;
+            if (!this.tryPierceHit(bullet, turret)) return;
             turret.hp -= bullet.damage ?? 1;
         } else {
             turret.hp -= bullet.damage ?? 1;
@@ -4958,10 +4966,7 @@ class GameScene extends Phaser.Scene {
     onDroneShot(drone, bullet) {
         if (!drone.active || drone.hp <= 0) return;
         if (bullet.pierce) {
-            const time = this.time.now;
-            const cd = bullet.contactCooldownMs ?? 0;
-            if (time - (bullet.lastHitTargetTime ?? -Infinity) < cd) return;
-            bullet.lastHitTargetTime = time;
+            if (!this.tryPierceHit(bullet, drone)) return;
             drone.hp -= bullet.damage ?? 1;
         } else {
             drone.hp -= bullet.damage ?? 1;
@@ -5255,10 +5260,7 @@ class GameScene extends Phaser.Scene {
     onHarvesterShot(drone, bullet) {
         if (!drone.active || drone.hp <= 0) return;
         if (bullet.pierce) {
-            const time = this.time.now;
-            const cd = bullet.contactCooldownMs ?? 0;
-            if (time - (bullet.lastHitTargetTime ?? -Infinity) < cd) return;
-            bullet.lastHitTargetTime = time;
+            if (!this.tryPierceHit(bullet, drone)) return;
             drone.hp -= bullet.damage ?? 1;
         } else {
             drone.hp -= bullet.damage ?? 1;
@@ -6027,10 +6029,7 @@ class GameScene extends Phaser.Scene {
         if (!entei.state || entei.state === 'entering') return;
         const dmg = bullet.damage ?? 1;
         if (bullet.pierce) {
-            const time = this.time.now;
-            const cd = bullet.contactCooldownMs ?? 0;
-            if (time - (bullet.lastHitTargetTime ?? -Infinity) < cd) return;
-            bullet.lastHitTargetTime = time;
+            if (!this.tryPierceHit(bullet, entei)) return;
             this.boss.onHit(dmg);
         } else {
             this.boss.onHit(dmg);

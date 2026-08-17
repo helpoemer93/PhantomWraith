@@ -4,7 +4,7 @@ const ThunderLaserWallHSpec = {
     width: 16,
     color: 0x66ccff,
     strokeColor: 0xccf2ff,
-    speed: 140,
+    speed: 130,
     startX: 472,           // 우측 시작 (왼쪽 캐릭터 반응 유예)
     minX: 8,
     maxX: 472,
@@ -17,7 +17,7 @@ const ThunderLaserWallSpec = {
     height: 16,
     color: 0x66ccff,
     strokeColor: 0xccf2ff,
-    speed: 140,
+    speed: 130,
     startY: 8,
     minY: 8,
     maxY: 792,
