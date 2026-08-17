@@ -112,7 +112,8 @@ class UpgradeShopScene extends Phaser.Scene {
         const weaponLevels = this.registry.get('weaponLevels') || {};
         const loadout = this.registry.get('loadout');
         const bossProgress = this.registry.get('bossProgress') || {};
-        Storage.save(weaponLevels, loadout, bossProgress, this.crystals, this.upgrades);
+        const challengeProgress = this.registry.get('challengeProgress') || makeInitialChallengeProgress();
+        Storage.save(weaponLevels, loadout, bossProgress, this.crystals, this.upgrades, challengeProgress);
         this.refresh();
     }
 

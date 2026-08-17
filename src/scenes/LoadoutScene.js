@@ -14,6 +14,12 @@ class LoadoutScene extends Phaser.Scene {
             ? { p1: raw.p1.slice(), p2: raw.p2.slice(), mirror: raw.mirror ?? true }
             : { p1: [null, null, null, null], p2: [null, null, null, null], mirror: true };
 
+        // 챌린지 세션 상태 (오버레이에서 편집, 닫을 때 registry에 반영).
+        const savedActive = this.registry.get('activeChallenges') || {};
+        this.activeChallenges = { ...savedActive };
+        this.overlayOpen = false;
+        this.overlayCursor = 0;
+
         this.cursorIndex = 0;
 
         this.add.text(this.centerX, 30, '장착 화면', {
@@ -27,6 +33,15 @@ class LoadoutScene extends Phaser.Scene {
             fontSize: '11px', color: '#ffffff',
         }).setOrigin(0.5);
         this.mirrorBtnBg.on('pointerdown', () => this.toggleMirror());
+
+        // 챌린지 버튼 (좌측 상단, 미러 버튼과 대칭 배치)
+        this.challengeBtnBg = this.add.rectangle(90, 30, 160, 22, 0x443322)
+            .setStrokeStyle(1, 0xffcc33)
+            .setInteractive({ useHandCursor: true });
+        this.challengeBtnText = this.add.text(90, 30, '', {
+            fontSize: '11px', color: '#ffcc33',
+        }).setOrigin(0.5);
+        this.challengeBtnBg.on('pointerdown', () => this.openChallengeOverlay());
 
         this.add.text(20, 80, '1P', {
             fontSize: '14px', color: '#ff4466',
@@ -54,7 +69,7 @@ class LoadoutScene extends Phaser.Scene {
         this.preview = new WeaponPreview(this, previewX, previewY, previewW, previewH);
 
         this.add.text(this.centerX, GameConfig.GAME_HEIGHT - 60,
-            '↑↓/W·S: 무기 선택   ← 1P 장착   → 2P 장착   Backspace: 해제',
+            '↑↓/W·S: 무기 선택   ← 1P 장착   → 2P 장착   Backspace: 해제   C: 챌린지',
             { fontSize: '10px', color: '#8888aa', align: 'center', lineSpacing: 4 }
         ).setOrigin(0.5);
         this.add.text(this.centerX, GameConfig.GAME_HEIGHT - 28,
@@ -72,8 +87,136 @@ class LoadoutScene extends Phaser.Scene {
         this.keyRemove = this.input.keyboard.addKey(KC.BACKSPACE);
         this.keyStart = this.input.keyboard.addKey(KC.SPACE);
         this.keyMenu = this.input.keyboard.addKey(KC.ESC);
+        this.keyChallenge = this.input.keyboard.addKey(KC.C);
+        this.keyToggle = this.input.keyboard.addKey(KC.ENTER);
 
+        this.buildChallengeOverlay();
         this.refresh();
+    }
+
+    buildChallengeOverlay() {
+        this.overlayItems = [];
+        this.overlayRows = [];
+
+        const dim = this.add.rectangle(
+            GameConfig.GAME_WIDTH / 2, GameConfig.GAME_HEIGHT / 2,
+            GameConfig.GAME_WIDTH, GameConfig.GAME_HEIGHT,
+            0x000000, 0.75
+        ).setDepth(100).setVisible(false).setInteractive();
+        dim.on('pointerdown', () => this.closeChallengeOverlay());
+        this.overlayItems.push(dim);
+
+        const panelX = GameConfig.GAME_WIDTH / 2;
+        const panelY = GameConfig.GAME_HEIGHT / 2;
+        const panelW = 420;
+        const panelH = 520;
+        const panel = this.add.rectangle(panelX, panelY, panelW, panelH, 0x14202e)
+            .setStrokeStyle(2, 0x8899aa)
+            .setDepth(101).setVisible(false)
+            .setInteractive(); // 패널 내부 여백 클릭은 흡수 (dim 오작동 방지)
+        this.overlayItems.push(panel);
+
+        const title = this.add.text(panelX, panelY - panelH / 2 + 24, '챌린지 선택', {
+            fontSize: '20px', color: '#ffcc33',
+        }).setOrigin(0.5).setDepth(102).setVisible(false);
+        this.overlayItems.push(title);
+
+        const rowStartY = panelY - panelH / 2 + 70;
+        const rowHeight = 70;
+        Challenges.forEach((c, i) => {
+            const rowY = rowStartY + i * rowHeight + rowHeight / 2;
+            const rowBg = this.add.rectangle(panelX, rowY, panelW - 40, rowHeight - 10, 0x223344)
+                .setStrokeStyle(1, 0x556677)
+                .setDepth(102).setVisible(false)
+                .setInteractive({ useHandCursor: true });
+            rowBg.on('pointerdown', () => {
+                this.overlayCursor = i;
+                this.toggleActiveChallenge(c.id);
+            });
+            rowBg.on('pointerover', () => {
+                this.overlayCursor = i;
+                this.refreshOverlay();
+            });
+            this.overlayItems.push(rowBg);
+
+            const cbSize = 18;
+            const cbX = panelX - panelW / 2 + 36;
+            const cbBg = this.add.rectangle(cbX, rowY - 8, cbSize, cbSize, 0x111122)
+                .setStrokeStyle(1, 0x8899aa)
+                .setDepth(103).setVisible(false);
+            const cbCheck = this.add.text(cbX, rowY - 8, '', {
+                fontSize: '14px', color: '#ffcc33',
+            }).setOrigin(0.5).setDepth(104).setVisible(false);
+            this.overlayItems.push(cbBg, cbCheck);
+
+            const label = this.add.text(cbX + cbSize + 10, rowY - 16, c.label, {
+                fontSize: '15px', color: '#ffffff',
+            }).setDepth(103).setVisible(false);
+            this.overlayItems.push(label);
+
+            const desc = this.add.text(cbX + cbSize + 10, rowY + 5, c.description, {
+                fontSize: '11px', color: '#aabbcc',
+            }).setDepth(103).setVisible(false);
+            this.overlayItems.push(desc);
+
+            this.overlayRows.push({ rowBg, cbBg, cbCheck, challenge: c });
+        });
+
+        const hint = this.add.text(
+            panelX, panelY + panelH / 2 - 20,
+            '↑↓/W·S: 선택   Space·Enter: 토글   ESC 또는 C: 닫기',
+            { fontSize: '10px', color: '#8899aa', align: 'center' }
+        ).setOrigin(0.5).setDepth(102).setVisible(false);
+        this.overlayItems.push(hint);
+    }
+
+    openChallengeOverlay() {
+        if (this.overlayOpen) return;
+        this.overlayOpen = true;
+        for (const item of this.overlayItems) item.setVisible(true);
+        this.refreshOverlay();
+    }
+
+    closeChallengeOverlay() {
+        if (!this.overlayOpen) return;
+        this.overlayOpen = false;
+        for (const item of this.overlayItems) item.setVisible(false);
+        this.registry.set('activeChallenges', { ...this.activeChallenges });
+        this.refreshChallengeButton();
+    }
+
+    toggleActiveChallenge(id) {
+        if (this.activeChallenges[id]) delete this.activeChallenges[id];
+        else this.activeChallenges[id] = true;
+        this.refreshOverlay();
+    }
+
+    refreshOverlay() {
+        if (!this.overlayRows) return;
+        this.overlayRows.forEach((row, i) => {
+            const isCursor = i === this.overlayCursor;
+            const isActive = !!this.activeChallenges[row.challenge.id];
+            row.rowBg.setFillStyle(isCursor ? 0x334466 : 0x223344);
+            row.rowBg.setStrokeStyle(isCursor ? 2 : 1, isCursor ? 0xffcc33 : 0x556677);
+            row.cbCheck.setText(isActive ? '✓' : '');
+            row.cbBg.setFillStyle(isActive ? 0x332211 : 0x111122);
+        });
+    }
+
+    refreshChallengeButton() {
+        if (!this.challengeBtnText) return;
+        const activeCount = Challenges.filter((c) => this.activeChallenges[c.id]).length;
+        if (activeCount === 0) {
+            this.challengeBtnText.setText('챌린지 (없음)');
+            this.challengeBtnText.setColor('#886644');
+            this.challengeBtnBg.setFillStyle(0x332211);
+            this.challengeBtnBg.setStrokeStyle(1, 0x664422);
+        } else {
+            this.challengeBtnText.setText(`🎗 챌린지 [${activeCount}개 활성]`);
+            this.challengeBtnText.setColor('#ffcc33');
+            this.challengeBtnBg.setFillStyle(0x554400);
+            this.challengeBtnBg.setStrokeStyle(1, 0xffcc33);
+        }
     }
 
     buildClearButton(x, y, char) {
@@ -234,13 +377,40 @@ class LoadoutScene extends Phaser.Scene {
         const bossProgress = this.registry.get('bossProgress') || {};
         const crystals = this.registry.get('crystals') ?? 0;
         const upgrades = this.registry.get('upgrades') || makeInitialUpgrades();
-        Storage.save(this.weaponLevels, this.loadout, bossProgress, crystals, upgrades);
+        const challengeProgress = this.registry.get('challengeProgress') || makeInitialChallengeProgress();
+        Storage.save(this.weaponLevels, this.loadout, bossProgress, crystals, upgrades, challengeProgress);
         this.scene.start(sceneKey);
     }
 
     update(time, delta) {
         if (this.preview) this.preview.update(time, delta);
         const JD = Phaser.Input.Keyboard.JustDown;
+
+        if (this.overlayOpen) {
+            if (JD(this.keyMenu) || JD(this.keyChallenge)) {
+                this.closeChallengeOverlay();
+                return;
+            }
+            if (Challenges.length > 0) {
+                if (JD(this.keyUp1) || JD(this.keyUp2)) {
+                    this.overlayCursor = (this.overlayCursor - 1 + Challenges.length) % Challenges.length;
+                    this.refreshOverlay();
+                } else if (JD(this.keyDown1) || JD(this.keyDown2)) {
+                    this.overlayCursor = (this.overlayCursor + 1) % Challenges.length;
+                    this.refreshOverlay();
+                } else if (JD(this.keyStart) || JD(this.keyToggle)) {
+                    const c = Challenges[this.overlayCursor];
+                    this.toggleActiveChallenge(c.id);
+                }
+            }
+            return;
+        }
+
+        if (JD(this.keyChallenge)) {
+            this.openChallengeOverlay();
+            return;
+        }
+
         if (JD(this.keyMenu)) {
             this.persistAndExit('BossSelectScene');
             return;
@@ -271,6 +441,7 @@ class LoadoutScene extends Phaser.Scene {
     }
 
     refresh() {
+        this.refreshChallengeButton();
         if (this.mirrorBtnText) {
             const on = this.loadout.mirror;
             this.mirrorBtnText.setText(`1P·2P 동시 편집: ${on ? 'ON' : 'OFF'}`);

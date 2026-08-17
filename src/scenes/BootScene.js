@@ -125,6 +125,8 @@ class BootScene extends Phaser.Scene {
                 this.registry.set('bossProgress', saved.bossProgress);
                 this.registry.set('crystals', saved.crystals ?? 0);
                 this.registry.set('upgrades', saved.upgrades ?? makeInitialUpgrades());
+                this.registry.set('challengeProgress',
+                    saved.challengeProgress ?? makeInitialChallengeProgress());
             } else {
                 const init = makeInitialSaveData();
                 this.registry.set('weaponLevels', init.weaponLevels);
@@ -132,8 +134,9 @@ class BootScene extends Phaser.Scene {
                 this.registry.set('bossProgress', init.bossProgress);
                 this.registry.set('crystals', init.crystals);
                 this.registry.set('upgrades', init.upgrades);
+                this.registry.set('challengeProgress', init.challengeProgress);
                 Storage.save(init.weaponLevels, init.loadout, init.bossProgress,
-                    init.crystals, init.upgrades);
+                    init.crystals, init.upgrades, init.challengeProgress);
             }
         }
 
@@ -277,8 +280,9 @@ class BootScene extends Phaser.Scene {
         this.registry.set('bossProgress', init.bossProgress);
         this.registry.set('crystals', init.crystals);
         this.registry.set('upgrades', init.upgrades);
+        this.registry.set('challengeProgress', init.challengeProgress);
         Storage.save(init.weaponLevels, init.loadout, init.bossProgress,
-            init.crystals, init.upgrades);
+            init.crystals, init.upgrades, init.challengeProgress);
         this.scene.restart();
     }
 

@@ -8,6 +8,7 @@ class BossSelectScene extends Phaser.Scene {
         this.cameras.main.fadeIn(300, 0, 0, 0);
         this.centerX = GameConfig.GAME_WIDTH / 2;
         this.bossProgress = this.registry.get('bossProgress') || {};
+        this.challengeProgress = this.registry.get('challengeProgress') || {};
 
         this.add.text(this.centerX, 30, '보스 선택', {
             fontSize: '24px', color: '#ffee88',
@@ -83,6 +84,31 @@ class BossSelectScene extends Phaser.Scene {
             30, panelY + 34, '',
             { fontSize: '12px', color: '#ccccdd', lineSpacing: 6 }
         ).setDepth(10);
+        // 챌린지 리본 영역 (panel 우하단, 오른쪽에서 왼쪽으로 쌓임)
+        this.ribbonContainer = this.add.container(0, 0).setDepth(11);
+        this.ribbonAreaRight = GameConfig.GAME_WIDTH - 28;
+        this.ribbonAreaY = panelY + panelH - 20;
+    }
+
+    refreshRibbons() {
+        if (!this.ribbonContainer) return;
+        this.ribbonContainer.removeAll(true);
+        const boss = Stages[this.bossIndex];
+        const bossChallenges = this.challengeProgress[boss.id] || {};
+        const earned = Challenges.filter((c) => (bossChallenges[c.id] ?? 0) >= this.levelSel);
+        if (earned.length === 0) return;
+        const badgeW = 62;
+        const badgeH = 20;
+        const gap = 4;
+        earned.forEach((c, i) => {
+            const cx = this.ribbonAreaRight - badgeW / 2 - i * (badgeW + gap);
+            const bg = this.add.rectangle(cx, this.ribbonAreaY, badgeW, badgeH, c.color)
+                .setStrokeStyle(1, 0x000000);
+            const t = this.add.text(cx, this.ribbonAreaY, c.label, {
+                fontSize: '11px', color: c.textColor,
+            }).setOrigin(0.5);
+            this.ribbonContainer.add([bg, t]);
+        });
     }
 
     getLabelsForLevel(boss, level) {
@@ -241,6 +267,7 @@ class BossSelectScene extends Phaser.Scene {
             const labels = this.getLabelsForLevel(currBoss, this.levelSel);
             this.detailBody.setText(labels.map((l) => `· ${l}`).join('\n'));
         }
+        this.refreshRibbons();
 
         this.rows.forEach((r, i) => {
             const isCurrentBoss = i === this.bossIndex;

@@ -28,7 +28,10 @@ class GameScene extends Phaser.Scene {
 
     create() {
         this.cameras.main.fadeIn(300, 0, 0, 0);
-        const upgrades = this.registry.get('upgrades') || {};
+        this.activeChallenges = this.registry.get('activeChallenges') || {};
+        const savedUpgrades = this.registry.get('upgrades') || {};
+        // noUpgrade 챌린지: 세션용 upgrades만 초기화. 저장된 값은 그대로 유지.
+        const upgrades = this.activeChallenges.noUpgrade ? makeInitialUpgrades() : savedUpgrades;
         this.maxLives = Upgrades.maxLives.applied(upgrades.maxLives ?? 0);
         this.lives = this.maxLives;
         this.gameOver = false;
@@ -140,7 +143,9 @@ class GameScene extends Phaser.Scene {
         const loadout = this.registry.get('loadout') || {
             p1: [null, null, null, null], p2: [null, null, null, null],
         };
-        const weaponLevels = this.registry.get('weaponLevels') || {};
+        const savedWeaponLevels = this.registry.get('weaponLevels') || {};
+        // noUpgrade 챌린지: 세션용 weaponLevels 비움 → Player의 (level ?? 0) fallback으로 전부 Lv0 강화.
+        const weaponLevels = this.activeChallenges.noUpgrade ? {} : savedWeaponLevels;
 
         const bottomY = GameConfig.GAME_HEIGHT - 100;
         this.player1 = new Player(
@@ -285,6 +290,23 @@ class GameScene extends Phaser.Scene {
             `${this.boss.data.name}  Lv${this.bossLevel}`,
             { fontSize: '14px', color: '#ffddff' }
         ).setOrigin(0.5, 0);
+        // 활성 챌린지 배지: 우상단에 오른쪽부터 왼쪽으로 나열
+        const activeChallengeDefs = Challenges.filter((c) => this.activeChallenges[c.id]);
+        if (activeChallengeDefs.length > 0) {
+            let rightX = GameConfig.GAME_WIDTH - 10;
+            for (const c of activeChallengeDefs) {
+                const bgHex = '#' + c.color.toString(16).padStart(6, '0');
+                const badge = this.add.text(
+                    rightX, 12, `🎗 ${c.label}`,
+                    {
+                        fontSize: '11px', color: c.textColor,
+                        backgroundColor: bgHex,
+                        padding: { x: 5, y: 3 },
+                    }
+                ).setOrigin(1, 0);
+                rightX -= badge.width + 4;
+            }
+        }
 
         this.uiHpBarBg = this.add.rectangle(
             GameConfig.GAME_WIDTH / 2, 40,
@@ -4163,6 +4185,7 @@ class GameScene extends Phaser.Scene {
         const weaponLevels = this.registry.get('weaponLevels') || {};
         const loadout = this.registry.get('loadout');
         const upgrades = this.registry.get('upgrades') || {};
+        const challengeProgress = this.registry.get('challengeProgress') || {};
 
         const prevBossLv = bossProgress[bossData.id] ?? 0;
         const isFirstClearOfLevel = this.bossLevel > prevBossLv;
@@ -4180,10 +4203,21 @@ class GameScene extends Phaser.Scene {
         const prevCrystals = this.registry.get('crystals') ?? 0;
         const newCrystals = prevCrystals + crystalReward;
 
+        // 챌린지 리본 획득: 현재는 활성만 되면 성공(=클리어)으로 간주.
+        // 추후 노히트·시간제한 등 실시간 조건 도입 시 여기 조건 분기 추가.
+        for (const c of Challenges) {
+            if (!this.activeChallenges[c.id]) continue;
+            if (!challengeProgress[bossData.id]) challengeProgress[bossData.id] = {};
+            challengeProgress[bossData.id][c.id] = Math.max(
+                challengeProgress[bossData.id][c.id] ?? 0, this.bossLevel
+            );
+        }
+        this.registry.set('challengeProgress', challengeProgress);
+
         this.registry.set('bossProgress', bossProgress);
         this.registry.set('weaponLevels', weaponLevels);
         this.registry.set('crystals', newCrystals);
-        Storage.save(weaponLevels, loadout, bossProgress, newCrystals, upgrades);
+        Storage.save(weaponLevels, loadout, bossProgress, newCrystals, upgrades, challengeProgress);
 
         const wpnName = Weapons[rewardId]?.name ?? rewardId;
         const line1 = isLevelUp
