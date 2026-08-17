@@ -80,6 +80,7 @@ class GameScene extends Phaser.Scene {
         this.doopaHolesSpec = null;
         this.blackHoles = [];
         this.whiteHoles = [];
+        this.doopaHoleParticles = [];
         this.holesRotation = 0;
         this.doopaCenteringState = null;
         // 두파팡 페이즈2→3 인터루드(doopaAscent): 두파팡 상승만. 소환 없음.
@@ -1588,6 +1589,7 @@ class GameScene extends Phaser.Scene {
     // holeIdx = 시계순 인덱스 (반경 오실레이션 위상 오프셋용).
     spawnDoopaHoles(spec, fadeInMs) {
         this.destroyDoopaHoles();
+        this.ensureHoleParticleTexture();
         if (!this.holesConnectorGraphics) {
             this.holesConnectorGraphics = this.add.graphics();
             this.holesConnectorGraphics.setDepth(14);
@@ -1608,6 +1610,8 @@ class GameScene extends Phaser.Scene {
             s.pairIdx = pairIdx;
             s.holeIdx = holeIdx;
             s.isBlack = isBlack;
+            if (isBlack) s.suctionSpawnAccum = 0;
+            else s.driftSpawnAccum = 0;
             if (fadeInMs > 0) {
                 s.setAlpha(0);
                 this.tweens.add({ targets: s, alpha: 1, duration: fadeInMs });
@@ -1707,6 +1711,27 @@ class GameScene extends Phaser.Scene {
                 }
             }
         });
+        // BH 흡입 파티클 스폰 (fadeIn 완료 후만).
+        const spawnIntervalMs = 60;
+        for (const bh of this.blackHoles) {
+            if (bh.alpha < 0.95) continue;
+            bh.suctionSpawnAccum = (bh.suctionSpawnAccum ?? 0) + delta;
+            while (bh.suctionSpawnAccum >= spawnIntervalMs) {
+                bh.suctionSpawnAccum -= spawnIntervalMs;
+                this.spawnHoleSuctionParticle(bh);
+            }
+        }
+        // WH 오라 유출 파티클 스폰 (잔잔한 계속 방출).
+        const driftIntervalMs = 110;
+        for (const wh of this.whiteHoles) {
+            if (wh.alpha < 0.95) continue;
+            wh.driftSpawnAccum = (wh.driftSpawnAccum ?? 0) + delta;
+            while (wh.driftSpawnAccum >= driftIntervalMs) {
+                wh.driftSpawnAccum -= driftIntervalMs;
+                this.spawnHoleDriftParticle(wh);
+            }
+        }
+        this.updateDoopaHoleParticles(time, delta);
     }
 
     warpPlayer(player, bh, wh) {
@@ -1744,6 +1769,8 @@ class GameScene extends Phaser.Scene {
             duration: spec.wh360FlashMs ?? 100,
             onComplete: () => flash.destroy(),
         });
+        this.spawnHoleBurstParticles(wh.x, wh.y, 7, 110, 180, 260,
+            [0xffffff, 0xff88ff, 0xffbbee]);
     }
 
     // WH에서 360°/N발 즉시 사출. 짧은 flash로 발사 시각적 신호.
@@ -1770,6 +1797,9 @@ class GameScene extends Phaser.Scene {
             const vy = Math.sin(a) * speed;
             this.spawnColoredCircleBullet(wh.x, wh.y, vx, vy, r, color);
         }
+        // 슈와아아 사출 파티클
+        this.spawnHoleBurstParticles(wh.x, wh.y, 16, 150, 240, 340,
+            [0xffffff, 0xffffff, 0xff88ff, 0xffbbee, 0xff44cc]);
     }
 
     // BulletPattern.doopaSpiral 진입점. 3구체(HP 있음, 격파 가능) 스폰.
@@ -1879,11 +1909,119 @@ class GameScene extends Phaser.Scene {
         if (this.whiteHoles) {
             for (const h of this.whiteHoles) if (h && h.active) h.destroy();
         }
+        if (this.doopaHoleParticles) {
+            for (const p of this.doopaHoleParticles) {
+                if (p.img && p.img.active) p.img.destroy();
+            }
+        }
+        this.doopaHoleParticles = [];
         this.blackHoles = [];
         this.whiteHoles = [];
         this.holesRotation = 0;
         this.holesOscTime = 0;
         if (this.holesConnectorGraphics) this.holesConnectorGraphics.clear();
+    }
+
+    // 흡입/사출 파티클 텍스처 (3×3 픽셀). setTint로 색 지정.
+    ensureHoleParticleTexture() {
+        if (this.textures.exists('doopa-hole-pixel')) return;
+        const g = this.make.graphics({ add: false });
+        g.fillStyle(0xffffff, 1);
+        g.fillRect(0, 0, 3, 3);
+        g.generateTexture('doopa-hole-pixel', 3, 3);
+        g.destroy();
+    }
+
+    // BH 주변 링에서 픽셀 파티클 스폰. 나선형으로 홀 중심 흡수. hole 이동을 따라감.
+    spawnHoleSuctionParticle(hole) {
+        const holeR = this.doopaHolesSpec?.holeRadius ?? 26;
+        const startRadius = Phaser.Math.Between(holeR + 40, holeR + 70);
+        const startAngle = Math.random() * Math.PI * 2;
+        const lifetimeMs = Phaser.Math.Between(450, 650);
+        const angularSpeed = Phaser.Math.FloatBetween(4.5, 6.5);
+        const radialSpeed = (startRadius - holeR) / (lifetimeMs / 1000);
+        const colors = [0xffffff, 0xcc99ff, 0x8844ff, 0x8844ff, 0x442266];
+        const color = colors[Phaser.Math.Between(0, colors.length - 1)];
+        const px = hole.x + Math.cos(startAngle) * startRadius;
+        const py = hole.y + Math.sin(startAngle) * startRadius;
+        const img = this.add.image(px, py, 'doopa-hole-pixel').setTint(color);
+        img.setDepth(14); // 홀(15) 아래 → 흡수되는 착시
+        this.doopaHoleParticles.push({
+            img, kind: 'suction', hole,
+            angle: startAngle, radius: startRadius,
+            angularSpeed, radialSpeed, endRadius: holeR,
+            spawnTime: this.time.now, lifetimeMs,
+        });
+    }
+
+    // WH 내부에서 잔잔히 바깥으로 흐르는 파티클. 항상 켜져 있어 존재감 유지.
+    spawnHoleDriftParticle(hole) {
+        const holeR = this.doopaHolesSpec?.holeRadius ?? 26;
+        const startRadius = Phaser.Math.FloatBetween(0, holeR * 0.5);
+        const angle = Math.random() * Math.PI * 2;
+        const lifetimeMs = Phaser.Math.Between(550, 800);
+        const outwardSpeed = Phaser.Math.FloatBetween(35, 70);
+        const vx = Math.cos(angle) * outwardSpeed;
+        const vy = Math.sin(angle) * outwardSpeed;
+        const colors = [0xffffff, 0xffffff, 0xffffff, 0xffbbee, 0xff88ff];
+        const color = colors[Phaser.Math.Between(0, colors.length - 1)];
+        const px = hole.x + Math.cos(angle) * startRadius;
+        const py = hole.y + Math.sin(angle) * startRadius;
+        const img = this.add.image(px, py, 'doopa-hole-pixel').setTint(color);
+        img.setDepth(16);
+        img.setAlpha(0.75);
+        this.doopaHoleParticles.push({
+            img, kind: 'drift', vx, vy, baseAlpha: 0.75,
+            spawnTime: this.time.now, lifetimeMs,
+        });
+    }
+
+    // WH 중심에서 방사형 사출. 홀 위에 얹혀서 나오는 듯한 착시 위해 depth 16.
+    spawnHoleBurstParticles(x, y, count, speedMin, speedMax, lifetimeMs, colors) {
+        for (let i = 0; i < count; i += 1) {
+            const angle = (i / count) * Math.PI * 2 + Phaser.Math.FloatBetween(-0.15, 0.15);
+            const speed = Phaser.Math.FloatBetween(speedMin, speedMax);
+            const vx = Math.cos(angle) * speed;
+            const vy = Math.sin(angle) * speed;
+            const color = colors[Phaser.Math.Between(0, colors.length - 1)];
+            const img = this.add.image(x, y, 'doopa-hole-pixel').setTint(color);
+            img.setDepth(16);
+            this.doopaHoleParticles.push({
+                img, kind: 'burst', vx, vy,
+                spawnTime: this.time.now, lifetimeMs,
+            });
+        }
+    }
+
+    updateDoopaHoleParticles(time, delta) {
+        if (!this.doopaHoleParticles || this.doopaHoleParticles.length === 0) return;
+        const dt = delta / 1000;
+        const remaining = [];
+        for (const p of this.doopaHoleParticles) {
+            if (!p.img || !p.img.active) continue;
+            const elapsed = time - p.spawnTime;
+            const t = elapsed / p.lifetimeMs;
+            if (t >= 1) { p.img.destroy(); continue; }
+            if (p.kind === 'suction') {
+                if (!p.hole || !p.hole.active) { p.img.destroy(); continue; }
+                p.angle += p.angularSpeed * dt;
+                p.radius -= p.radialSpeed * dt;
+                if (p.radius <= p.endRadius) { p.img.destroy(); continue; }
+                p.img.x = p.hole.x + Math.cos(p.angle) * p.radius;
+                p.img.y = p.hole.y + Math.sin(p.angle) * p.radius;
+                p.img.alpha = Math.min(1, (1 - t) * 1.2);
+            } else if (p.kind === 'burst') {
+                p.img.x += p.vx * dt;
+                p.img.y += p.vy * dt;
+                p.img.alpha = 1 - t;
+            } else if (p.kind === 'drift') {
+                p.img.x += p.vx * dt;
+                p.img.y += p.vy * dt;
+                p.img.alpha = p.baseAlpha * (1 - t);
+            }
+            remaining.push(p);
+        }
+        this.doopaHoleParticles = remaining;
     }
 
     // ===== 두파팡 페이즈2 → 페이즈3 인터루드 (doopaAscent): 두파팡 상승만 =====
