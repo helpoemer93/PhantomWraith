@@ -34,7 +34,7 @@ const ThunderData = {
     color: 0xffee44,
     startY: 120,
     movement: { type: 'fixed' },
-    phaseTransitionMs: 4500,
+    phaseTransitionMs: 5000,
     phases: [
         {
             hpEnterRatio: 1.0,
@@ -57,7 +57,7 @@ const ThunderData = {
             // 코일 폭발 스폰: 자포코일 위치에서 6방향으로 6마리 동시 발사.
             // 첫 스폰은 자포코일 등장 즉시. 이후 6초마다 반복.
             coilBurstSpawner: {
-                intervalMs: 7000,
+                intervalMs: 6000,
                 immediate: true,
                 // 절대 각도 (codebase: 0=우, 시계방향). 6방향 = 60° 간격, 위/아래 정중앙 제외.
                 // 우중(0), 우하(60), 좌하(120), 좌중(180), 좌상(240), 우상(300)
@@ -65,7 +65,7 @@ const ThunderData = {
                 coil: {
                     radius: 14,
                     moveSpeed: 100,
-                    lifetimeMs: 14000,     // 2세대 공존을 위한 수명
+                    lifetimeMs: 12000,     // 2세대 공존을 위한 수명
                     contactDamage: 1,
                 },
                 // 자기력선: 매 프레임 각 코일이 가장 가까운 K기와 링크 (동적)
@@ -130,7 +130,7 @@ const ThunderData = {
             hpEnterRatio: 0.33,
             pikachus: {
                 count: 2,
-                radius: 16,
+                radius: 24,
                 spriteKey: 'pikachu-tumble',   // Tumble-Anim 재포장 (40×40 6프레임, 데굴데굴)
                 animKey: 'pikachu-tumble-roll',
                 color: 0xffee44,               // fallback (스프라이트 없을 때)
@@ -168,7 +168,7 @@ const ThunderData = {
             name: 'thunder_phase2_transition',
             spec: {
                 type: 'thunderPhase2',
-                durationMs: 4500,
+                durationMs: 5000,
                 magnetonSelfDestruct: {
                     warnMs: 2000,
                     burstBullets: 90,
@@ -194,8 +194,36 @@ const ThunderData = {
             name: 'thunder_phase3_transition',
             spec: {
                 type: 'thunderPhase3',
-                durationMs: 4500,
-                // 찌리리공은 벽 튕김을 그만두고 관성대로 화면 밖 이탈 (자폭 없음). 로직은 GameScene.startThunderPhase3Interlude.
+                durationMs: 5000,
+                // 썬더 중앙 이동 (인터루드 시작 즉시 → travelMs 안에 도착)
+                thunderMove: {
+                    targetX: 240,
+                    targetY: 400,
+                    travelMs: 2000,
+                },
+                // 찌리리공 자폭 (시작 즉시 warn → burst → 파괴). 각 찌리리공에서 3링×36발=108발.
+                // 링1·3은 0° 기준, 링2는 5° 오프셋. 속도 100/140/180으로 3파도 자연 분리.
+                voltorbBurst: {
+                    warnMs: 1500,
+                    rings: [
+                        { bulletCount: 36, angleOffsetDeg: 0, speed: 100 },
+                        { bulletCount: 36, angleOffsetDeg: 5, speed: 140 },
+                        { bulletCount: 36, angleOffsetDeg: 0, speed: 180 },
+                    ],
+                    bullet: { radius: 3, color: 0xffffdd, damage: 1 },
+                },
+                // 피카츄 사출: 썬더 도착 시점에 스폰 → Bezier로 4벽 순환 시작점(0, 0.5 진행률)까지.
+                // 페이즈3 진입 시 spawnPikachus가 이 인스턴스를 재사용 (좌표 그대로 이음).
+                pikachuBurst: {
+                    spawnAtMs: 2000,
+                    travelMs: 3000,
+                    spriteKey: 'pikachu-tumble',
+                    animKey: 'pikachu-tumble-roll',
+                    radius: 24,
+                    // 페이즈3 pikachus 스펙과 일치해야 이음매 없음
+                    edgeInset: 24,
+                    initialProgressRatios: [0, 0.5],
+                },
             },
         },
     ],
@@ -209,11 +237,64 @@ const Thunder = {
         const lv = Math.max(1, level);
         const scale = Math.pow(1.20, lv - 1);
         d.maxHp = Math.round(d.maxHp * scale);
+
+        // Lv2: 찌리리공 자폭 쿨타임 7s → 6s
+        if (lv >= 2) {
+            for (const phase of d.phases) {
+                if (phase.voltorbs) phase.voltorbs.burstCycleMs = 6000;
+            }
+        }
+        // Lv3: 수명 다 된 코일이 일반 캐릭터에게 조준경고 → 돌진 (자살드론 chargeSpeed 500의 50%)
+        if (lv >= 3) {
+            for (const phase of d.phases) {
+                if (phase.coilBurstSpawner?.coil) {
+                    phase.coilBurstSpawner.coil.chargeOnExpire = {
+                        warnMs: 500,
+                        chargeSpeed: 250,
+                        warnColor: 0xff4444,
+                        warnAlpha: 0.75,
+                        warnWidth: 3,
+                    };
+                }
+            }
+        }
+        // Lv4: 레이저벽 속도 130 → 140 (전 페이즈 지속)
+        if (lv >= 4) {
+            for (const phase of d.phases) {
+                if (phase.laserWallH) phase.laserWallH.speed = 140;
+            }
+            for (const inter of d.interludes ?? []) {
+                if (inter.spec?.laserWall) inter.spec.laserWall.speed = 140;
+            }
+        }
+        // Lv5: 페이즈3 피카츄 3마리 (12시 방향 상변중앙 + 좌우벽 하단 대칭 이등변삼각형)
+        // 상변중앙 (240, 24) → perimeter progress = W'/2 = 216, ratio = 216/P ≈ 0.0912
+        // 세 마리 진행률: [baseRatio, baseRatio+1/3, baseRatio+2/3]
+        if (lv >= 5) {
+            const baseRatio = 0.0912;
+            const ratios = [baseRatio, baseRatio + 1 / 3, baseRatio + 2 / 3];
+            for (const phase of d.phases) {
+                if (phase.pikachus) {
+                    phase.pikachus.count = 3;
+                    phase.pikachus.initialProgressRatios = ratios;
+                }
+            }
+            for (const inter of d.interludes ?? []) {
+                if (inter.spec?.pikachuBurst) {
+                    inter.spec.pikachuBurst.initialProgressRatios = ratios;
+                }
+            }
+        }
         return d;
     },
 
     getLevelUpLabels(level) {
         if (level <= 1) return [];
-        return ['HP +20%'];
+        const labels = ['HP +20%'];
+        if (level === 2) labels.push('찌리리공 자폭 쿨타임 -1s');
+        else if (level === 3) labels.push('수명 다 된 코일이 캐릭터에게 돌진');
+        else if (level === 4) labels.push('레이저벽 속도 +10');
+        else if (level === 5) labels.push('피카츄 3마리 (삼각형)');
+        return labels;
     },
 };

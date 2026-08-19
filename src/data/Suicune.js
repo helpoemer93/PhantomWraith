@@ -77,6 +77,7 @@ const SuicuneData = {
             suicunePhase3: {
                 subCyclesPerGrand: 3,        // 소사이클 3회 뒤 그랜드
                 subCycleDelayMs: 700,        // 물대포 마지막 발사 → 다음 조준까지 딜링 창
+                postChargeDelayMs: 500,      // 돌진 직후 → 첫 물대포 조준선 스폰까지 딜링 창
                 // 소사이클 돌진 (기존과 동일 규칙)
                 aimIntervalMs: 1000,
                 warnColor: 0xff2222,         // 붉은 경고선 (돌진)

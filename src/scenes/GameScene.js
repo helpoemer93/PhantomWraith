@@ -125,10 +125,14 @@ class GameScene extends Phaser.Scene {
         this.coilBurstSpec = null;
         this.coilBurstLastTime = 0;
         this.magneticWebGraphics = null;
+        // Lv3+ 코일 돌진 경고선 렌더링 (충돌 없음, 시각만)
+        this.coilChargeGraphics = null;
         this.edgeFieldsSpec = null;
         this.edgeFieldsGraphics = null;
         this.voltorbs = [];
         this.voltorbSpec = null;
+        // 썬더 페이즈2→3 인터루드 상태 (썬더 이동/찌리리공 자폭/피카츄 사출 진행)
+        this.thunderP3Interlude = null;
         // 썬더 페이즈3: 피카츄 2마리 + 자기력선 + 썬더 라이더 모드
         this.pikachus = [];
         this.pikachuSpec = null;
@@ -651,6 +655,7 @@ class GameScene extends Phaser.Scene {
         this.updateMagneticWeb(time);
         this.updateEdgeFields(time);
         this.updateVoltorbs(time, delta);
+        this.updateThunderPhase3Interlude(time, delta);
         this.updatePikachus(time, delta);
         this.updatePikachuWeb(time);
         this.updateThunderRider(time, delta);
@@ -2986,6 +2991,10 @@ class GameScene extends Phaser.Scene {
             this.magneticWebGraphics = this.add.graphics();
             this.magneticWebGraphics.setDepth(-1);   // 코일·자포코일 뒤로
         }
+        if (!this.coilChargeGraphics) {
+            this.coilChargeGraphics = this.add.graphics();
+            this.coilChargeGraphics.setDepth(31);   // 코일/스프라이트 위로
+        }
     }
 
     updateCoilBurstSpawner(time) {
@@ -3036,6 +3045,13 @@ class GameScene extends Phaser.Scene {
             fleeVy: 0,
             usesDirAnim: useSprite,
             currentDir,
+            // Lv3+ 돌진 상태 필드
+            chargeOnExpire: spec.chargeOnExpire ?? null,
+            charging: false,
+            chargeState: null,      // 'warn' | 'charge'
+            chargeWarnStart: 0,
+            chargeVx: 0, chargeVy: 0,
+            chargeTargetX: 0, chargeTargetY: 0,
         });
     }
 
@@ -3068,8 +3084,12 @@ class GameScene extends Phaser.Scene {
     }
 
     updateCoils(time, delta) {
-        if (this.coils.length === 0) return;
+        if (this.coils.length === 0) {
+            if (this.coilChargeGraphics) this.coilChargeGraphics.clear();
+            return;
+        }
         const dt = delta / 1000;
+        if (this.coilChargeGraphics) this.coilChargeGraphics.clear();
         for (let i = this.coils.length - 1; i >= 0; i -= 1) {
             const c = this.coils[i];
             if (!c.sprite || !c.sprite.active) { this.coils.splice(i, 1); continue; }
@@ -3077,35 +3097,90 @@ class GameScene extends Phaser.Scene {
                 // 도망 상태: 수명·벽 튕김 무시. 벡터 그대로 이동해 화면 밖으로.
                 c.sprite.x += c.fleeVx * dt;
                 c.sprite.y += c.fleeVy * dt;
-            } else {
-                // 수명 초과 시 제거
-                if (time - c.spawnTime >= c.lifetimeMs) {
-                    c.sprite.destroy();
-                    this.coils.splice(i, 1);
-                    continue;
+            } else if (c.charging) {
+                // Lv3+ 돌진 페이즈. warn = 정지 + 조준선 렌더, charge = 관성 이동 + 화면 밖 이탈 시 destroy.
+                if (c.chargeState === 'warn') {
+                    const wSpec = c.chargeOnExpire ?? {};
+                    if (time - c.chargeWarnStart >= (wSpec.warnMs ?? 500)) {
+                        c.chargeState = 'charge';
+                        c.vx = c.chargeVx;
+                        c.vy = c.chargeVy;
+                    } else if (this.coilChargeGraphics) {
+                        // 코일 → 조준 목표점까지 붉은 선. 접촉 데미지 없음.
+                        const g = this.coilChargeGraphics;
+                        g.lineStyle(wSpec.warnWidth ?? 3, wSpec.warnColor ?? 0xff4444, wSpec.warnAlpha ?? 0.75);
+                        g.beginPath();
+                        g.moveTo(c.sprite.x, c.sprite.y);
+                        g.lineTo(c.chargeTargetX, c.chargeTargetY);
+                        g.strokePath();
+                    }
+                } else {
+                    // charge 상태: 관성 이동, 화면 밖 크게 벗어나면 destroy
+                    c.sprite.x += c.vx * dt;
+                    c.sprite.y += c.vy * dt;
+                    const m = 40;
+                    if (c.sprite.x < -m || c.sprite.x > GameConfig.GAME_WIDTH + m ||
+                        c.sprite.y < -m || c.sprite.y > GameConfig.GAME_HEIGHT + m) {
+                        c.sprite.destroy();
+                        this.coils.splice(i, 1);
+                        continue;
+                    }
                 }
-                // 이동 + 4벽 개별 튕김
-                c.sprite.x += c.vx * dt;
-                c.sprite.y += c.vy * dt;
-                const r = c.radius;
-                const xMin = r, xMax = GameConfig.GAME_WIDTH - r;
-                const yMin = r, yMax = GameConfig.GAME_HEIGHT - r;
-                if (c.sprite.x <= xMin) { c.sprite.x = xMin; c.vx = Math.abs(c.vx); }
-                else if (c.sprite.x >= xMax) { c.sprite.x = xMax; c.vx = -Math.abs(c.vx); }
-                if (c.sprite.y <= yMin) { c.sprite.y = yMin; c.vy = Math.abs(c.vy); }
-                else if (c.sprite.y >= yMax) { c.sprite.y = yMax; c.vy = -Math.abs(c.vy); }
+            } else {
+                // 수명 초과 시: chargeOnExpire 있으면 warn 진입, 없으면 destroy
+                if (time - c.spawnTime >= c.lifetimeMs) {
+                    if (c.chargeOnExpire) {
+                        const target = this.pickCoilChargeTarget();
+                        if (!target) {
+                            // 조준할 캐릭터 없음 → 기존 로직대로 소멸
+                            c.sprite.destroy();
+                            this.coils.splice(i, 1);
+                            continue;
+                        }
+                        const dx = target.sprite.x - c.sprite.x;
+                        const dy = target.sprite.y - c.sprite.y;
+                        const dist = Math.hypot(dx, dy) || 1;
+                        const spd = c.chargeOnExpire.chargeSpeed ?? 250;
+                        c.charging = true;
+                        c.chargeState = 'warn';
+                        c.chargeWarnStart = time;
+                        c.chargeVx = (dx / dist) * spd;
+                        c.chargeVy = (dy / dist) * spd;
+                        c.chargeTargetX = target.sprite.x;
+                        c.chargeTargetY = target.sprite.y;
+                        c.vx = 0; c.vy = 0;
+                        // 방향 anim은 charge 진입 시 다음 프레임에서 자동 갱신
+                    } else {
+                        c.sprite.destroy();
+                        this.coils.splice(i, 1);
+                        continue;
+                    }
+                } else {
+                    // 이동 + 4벽 개별 튕김
+                    c.sprite.x += c.vx * dt;
+                    c.sprite.y += c.vy * dt;
+                    const r = c.radius;
+                    const xMin = r, xMax = GameConfig.GAME_WIDTH - r;
+                    const yMin = r, yMax = GameConfig.GAME_HEIGHT - r;
+                    if (c.sprite.x <= xMin) { c.sprite.x = xMin; c.vx = Math.abs(c.vx); }
+                    else if (c.sprite.x >= xMax) { c.sprite.x = xMax; c.vx = -Math.abs(c.vx); }
+                    if (c.sprite.y <= yMin) { c.sprite.y = yMin; c.vy = Math.abs(c.vy); }
+                    else if (c.sprite.y >= yMax) { c.sprite.y = yMax; c.vy = -Math.abs(c.vy); }
+                }
             }
             // 8방향 anim 갱신 (현재 실이동 벡터 기반). 방향 바뀐 경우에만 스위칭.
             if (c.usesDirAnim) {
                 const mvx = c.fleeing ? c.fleeVx : c.vx;
                 const mvy = c.fleeing ? c.fleeVy : c.vy;
-                const dir = this.angleToDir8(mvx, mvy);
-                if (dir !== c.currentDir) {
-                    this.playDirAnim(c.sprite, `metagross-chaser-dir-${dir}`);
-                    c.currentDir = dir;
+                if (mvx !== 0 || mvy !== 0) {
+                    const dir = this.angleToDir8(mvx, mvy);
+                    if (dir !== c.currentDir) {
+                        this.playDirAnim(c.sprite, `metagross-chaser-dir-${dir}`);
+                        c.currentDir = dir;
+                    }
                 }
             }
-            // 접촉 데미지 (도망 중에도 유지)
+            // 접촉 데미지 (도망·charge 중에도 유지, warn 정지 상태에서도 부딪히면 데미지)
             for (const p of [this.player1, this.player2]) {
                 if (!p || !p.sprite || !p.sprite.active || p.isInvincible) continue;
                 const dx = p.sprite.x - c.sprite.x;
@@ -3119,6 +3194,13 @@ class GameScene extends Phaser.Scene {
         }
     }
 
+    // 코일 돌진 조준 대상: 무적 아닌 캐릭터 우선. 둘 다 무적/없으면 null → 코일 소멸.
+    pickCoilChargeTarget() {
+        if (this.player1 && this.player1.sprite && this.player1.sprite.active && !this.player1.isInvincible) return this.player1;
+        if (this.player2 && this.player2.sprite && this.player2.sprite.active && !this.player2.isInvincible) return this.player2;
+        return null;
+    }
+
     destroyCoils() {
         for (const c of this.coils) {
             if (c.sprite) c.sprite.destroy();
@@ -3129,6 +3211,11 @@ class GameScene extends Phaser.Scene {
             this.magneticWebGraphics.clear();
             this.magneticWebGraphics.destroy();
             this.magneticWebGraphics = null;
+        }
+        if (this.coilChargeGraphics) {
+            this.coilChargeGraphics.clear();
+            this.coilChargeGraphics.destroy();
+            this.coilChargeGraphics = null;
         }
     }
 
@@ -3281,13 +3368,190 @@ class GameScene extends Phaser.Scene {
 
     // ===== 썬더 페이즈1→2 인터루드 =====
     // 자포코일 자폭 예약 + 모든 코일 즉시 파괴 (그물망도 함께 사라짐) + 위아래 벽 사전 소환.
-    // 페이즈2→3 인터루드: 찌리리공 2마리가 벽 튕김을 그만두고 관성대로 화면 밖으로 이탈
+    // 페이즈2→3 인터루드: 찌리리공 자폭(3링×36발) + 썬더 중앙 이동 + 피카츄 2마리 사출.
     startThunderPhase3Interlude(spec) {
+        const now = this.time.now;
+        // 찌리리공 자폭 예약: burst-warn 상태로 전환하고 위치 고정.
+        const warnMs = spec.voltorbBurst?.warnMs ?? 1500;
         for (const v of this.voltorbs) {
             if (!v.sprite || !v.sprite.active) continue;
-            v.escape = true;
-            v.state = 'move';         // warn 진입 방지
+            v.state = 'burst-warn';
+            v.vx = 0; v.vy = 0;
+            v.warnStartTime = now;
+            v.burstWarnMs = warnMs;
             if (v.overlay) v.overlay.setAlpha(0);
+        }
+        // 인터루드 상태 초기화. 매 프레임 updateThunderPhase3Interlude가 진행.
+        // warnLineGraphics: 두 피카츄 잇는 점선 경고 (곧 진짜 pikachuWeb 선 생긴다는 예고, 접촉 데미지 없음)
+        const warnLineGraphics = this.add.graphics();
+        warnLineGraphics.setDepth(-1);
+        this.thunderP3Interlude = {
+            startTime: now,
+            spec,
+            thunderStart: { x: this.boss.sprite.x, y: this.boss.sprite.y },
+            voltorbBurstFired: false,
+            pikachusSpawned: false,
+            pikachuBezier: [],   // [{p0, p1, p2}, ...] Bezier 궤적 (스폰 시 계산)
+            warnLineGraphics,
+        };
+    }
+
+    updateThunderPhase3Interlude(time, delta) {
+        const st = this.thunderP3Interlude;
+        if (!st) return;
+        const spec = st.spec;
+        const elapsed = time - st.startTime;
+
+        // 썬더 중앙 이동 (선형 lerp)
+        if (spec.thunderMove && this.boss && this.boss.sprite) {
+            const tm = spec.thunderMove;
+            const t = Math.min(1, elapsed / (tm.travelMs ?? 2000));
+            this.boss.sprite.x = st.thunderStart.x + (tm.targetX - st.thunderStart.x) * t;
+            this.boss.sprite.y = st.thunderStart.y + (tm.targetY - st.thunderStart.y) * t;
+        }
+
+        // 찌리리공 자폭 발사 (warnMs 경과 시 한 번)
+        const vb = spec.voltorbBurst;
+        if (vb && !st.voltorbBurstFired && elapsed >= (vb.warnMs ?? 1500)) {
+            for (const v of this.voltorbs) {
+                if (!v.sprite || !v.sprite.active) continue;
+                this.fireThunderVoltorbBurstRings(v.sprite.x, v.sprite.y, vb);
+                if (v.overlay) v.overlay.destroy();
+                v.sprite.destroy();
+            }
+            st.voltorbBurstFired = true;
+        }
+
+        // 피카츄 스폰 (썬더 도착 시점 = spawnAtMs 경과 시 한 번)
+        const pb = spec.pikachuBurst;
+        if (pb && !st.pikachusSpawned && elapsed >= (pb.spawnAtMs ?? 2000)) {
+            this.spawnThunderP3IntroPikachus(pb);
+            st.pikachusSpawned = true;
+        }
+
+        // 피카츄 Bezier 이동
+        if (st.pikachusSpawned && pb && this.pikachus.length > 0) {
+            const local = Math.max(0, elapsed - (pb.spawnAtMs ?? 2000));
+            const t = Math.min(1, local / (pb.travelMs ?? 3000));
+            for (let i = 0; i < this.pikachus.length; i += 1) {
+                const pk = this.pikachus[i];
+                const bez = st.pikachuBezier[i];
+                if (!pk || !pk.sprite || !bez) continue;
+                const inv = 1 - t;
+                pk.sprite.x = inv * inv * bez.p0.x + 2 * inv * t * bez.p1.x + t * t * bez.p2.x;
+                pk.sprite.y = inv * inv * bez.p0.y + 2 * inv * t * bez.p1.y + t * t * bez.p2.y;
+                // 진행 방향 회전 (도착 순간 4벽 순환 방향과 이음)
+                const dx = 2 * inv * (bez.p1.x - bez.p0.x) + 2 * t * (bez.p2.x - bez.p1.x);
+                const dy = 2 * inv * (bez.p1.y - bez.p0.y) + 2 * t * (bez.p2.y - bez.p1.y);
+                if (pk.sprite.setRotation && (dx !== 0 || dy !== 0)) {
+                    pk.sprite.setRotation(Math.atan2(dy, dx) + Math.PI / 2);
+                }
+            }
+            // 피카츄 페어 잇는 경고 점선 (곧 여기에 pikachuWeb 실선이 생김). 접촉 데미지 없음.
+            const g = st.warnLineGraphics;
+            if (g && this.pikachus.length >= 2) {
+                g.clear();
+                const pulse = 0.35 + Math.sin(time * 0.008) * 0.15;   // 0.2~0.5 알파 pulse
+                g.lineStyle(2, 0xffee44, pulse);
+                for (let i = 0; i < this.pikachus.length; i += 1) {
+                    for (let j = i + 1; j < this.pikachus.length; j += 1) {
+                        const a = this.pikachus[i]?.sprite;
+                        const b = this.pikachus[j]?.sprite;
+                        if (!a || !b || !a.active || !b.active) continue;
+                        this.drawDashedLine(g, a.x, a.y, b.x, b.y, 10, 8);
+                    }
+                }
+            }
+        }
+    }
+
+    // 두 점 사이 파선. Graphics.lineStyle은 호출자가 설정.
+    drawDashedLine(g, x1, y1, x2, y2, dashLen, gapLen) {
+        const dx = x2 - x1;
+        const dy = y2 - y1;
+        const len = Math.hypot(dx, dy);
+        if (len < 1e-6) return;
+        const ux = dx / len;
+        const uy = dy / len;
+        const step = dashLen + gapLen;
+        for (let d = 0; d < len; d += step) {
+            const sx = x1 + ux * d;
+            const sy = y1 + uy * d;
+            const eDist = Math.min(len, d + dashLen);
+            const ex = x1 + ux * eDist;
+            const ey = y1 + uy * eDist;
+            g.beginPath();
+            g.moveTo(sx, sy);
+            g.lineTo(ex, ey);
+            g.strokePath();
+        }
+    }
+
+    // 찌리리공 자폭: 3링(각 36발). 링별 각도 오프셋과 속도 차이로 3파도 자연 분리.
+    fireThunderVoltorbBurstRings(x, y, spec) {
+        const bs = spec.bullet ?? { radius: 3, color: 0xffffdd, damage: 1 };
+        for (const ring of spec.rings ?? []) {
+            const n = ring.bulletCount ?? 36;
+            const offsetRad = Phaser.Math.DegToRad(ring.angleOffsetDeg ?? 0);
+            const speed = ring.speed ?? 140;
+            for (let i = 0; i < n; i += 1) {
+                const angle = (i / n) * Math.PI * 2 + offsetRad;
+                const vx = Math.cos(angle) * speed;
+                const vy = Math.sin(angle) * speed;
+                const b = this.spawnColoredCircleBullet(x, y, vx, vy, bs.radius ?? 3, bs.color ?? 0xffffdd);
+                if (b) b.damage = bs.damage ?? 1;
+            }
+        }
+    }
+
+    // 인터루드 연출용 피카츄 2마리 스폰. 이 인스턴스가 페이즈3 spawnPikachus에서 재사용됨.
+    // Bezier 궤적: 시작 = 썬더 위치, 제어점 = 목표 방향 극단(수평 튀어나감 강조), 끝 = 목표 코너.
+    spawnThunderP3IntroPikachus(pb) {
+        this.ensurePikachuAnims();
+        const inset = pb.edgeInset ?? 24;
+        const W = GameConfig.GAME_WIDTH - 2 * inset;
+        const H = GameConfig.GAME_HEIGHT - 2 * inset;
+        const P = 2 * (W + H);
+        const ratios = pb.initialProgressRatios ?? [0, 0.5];
+        const bx = this.boss.sprite.x;
+        const by = this.boss.sprite.y;
+        this.pikachus = [];
+        this.thunderP3Interlude.pikachuBezier = [];
+        const useSprite = pb.spriteKey && this.textures.exists(pb.spriteKey + '-sprite');
+        for (let i = 0; i < ratios.length; i += 1) {
+            const s0 = P * ratios[i];
+            const target = this.perimeterPointFromProgress(s0, inset);
+            let obj;
+            if (useSprite) {
+                obj = this.add.sprite(bx, by, pb.spriteKey + '-sprite');
+                obj.setDisplaySize(pb.radius * 2, pb.radius * 2);
+                const animKey = pb.animKey ?? 'pikachu-tumble-roll';
+                if (this.anims.exists(animKey)) obj.play(animKey);
+            } else {
+                obj = this.add.circle(bx, by, pb.radius, 0xffee44);
+                obj.setStrokeStyle(2, 0x333333);
+            }
+            // 제어점: 기본은 좌/우로 튀어나감. 목표가 시작점에서 거의 정수직(±22.5°) 위치면 위/아래로 튀어나감(12시 사출).
+            const dx = target.x - bx;
+            const dy = target.y - by;
+            const angleAbs = Math.abs(Math.atan2(dy, dx));   // 0=+x, π/2=수직, π=−x
+            const isNearVertical = Math.abs(angleAbs - Math.PI / 2) < Math.PI / 8;
+            let ctrlX, ctrlY;
+            if (isNearVertical) {
+                const sign = dy >= 0 ? 1 : -1;
+                ctrlX = bx;
+                ctrlY = by + sign * (GameConfig.GAME_HEIGHT * 0.4);
+            } else {
+                const horizSign = dx >= 0 ? 1 : -1;
+                ctrlX = bx + horizSign * (GameConfig.GAME_WIDTH * 0.4);
+                ctrlY = by;
+            }
+            this.pikachus.push({ sprite: obj, progress: s0, radius: pb.radius });
+            this.thunderP3Interlude.pikachuBezier.push({
+                p0: { x: bx, y: by },
+                p1: { x: ctrlX, y: ctrlY },
+                p2: { x: target.x, y: target.y },
+            });
         }
     }
 
@@ -3389,7 +3653,14 @@ class GameScene extends Phaser.Scene {
                 }
                 continue;
             }
-            if (v.state === 'warn') {
+            if (v.state === 'burst-warn') {
+                // 인터루드 자폭 예약: 시각적 경고 페이드만 처리. 발사·파괴는 인터루드 훅에서.
+                const bw = v.burstWarnMs ?? 1500;
+                const t = Math.min(1, (time - v.warnStartTime) / bw);
+                v.overlay.setAlpha(t * (spec.warnMaxAlpha ?? 1.0));
+                v.overlay.x = v.sprite.x;
+                v.overlay.y = v.sprite.y;
+            } else if (v.state === 'warn') {
                 // 경고 중: 정지, 오버레이 알파 상승. warnMs 경과 → 발사 → 이동 재개
                 const t = Math.min(1, (time - v.warnStartTime) / warnMs);
                 v.overlay.setAlpha(t * (spec.warnMaxAlpha ?? 1.0));
@@ -3505,13 +3776,22 @@ class GameScene extends Phaser.Scene {
     }
 
     spawnPikachus(spec) {
-        this.destroyPikachus();
-        this.pikachuSpec = spec;
         const inset = spec.edgeInset ?? 0;
         const W = GameConfig.GAME_WIDTH - 2 * inset;
         const H = GameConfig.GAME_HEIGHT - 2 * inset;
         const P = 2 * (W + H);
         const ratios = spec.initialProgressRatios ?? [0, 0.5];
+        // 인터루드 연출에서 이미 스폰된 피카츄가 있으면 인스턴스 그대로 재사용 (좌표/애니메이션 이음).
+        if (this.pikachus.length > 0) {
+            this.pikachuSpec = spec;
+            for (let i = 0; i < this.pikachus.length; i += 1) {
+                this.pikachus[i].progress = P * (ratios[i % ratios.length] ?? 0);
+                this.pikachus[i].radius = spec.radius;
+            }
+            return;
+        }
+        this.destroyPikachus();
+        this.pikachuSpec = spec;
         const useSprite = spec.spriteKey && this.textures.exists(spec.spriteKey + '-sprite');
         if (useSprite) this.ensurePikachuAnims();
         for (let i = 0; i < (spec.count ?? 2); i += 1) {
@@ -3596,23 +3876,28 @@ class GameScene extends Phaser.Scene {
         const g = this.pikachuWebGraphics;
         g.clear();
         g.lineStyle(spec.lineWidth ?? 2, spec.lineColor ?? 0xffee44, spec.lineAlpha ?? 0.75);
-        const a = this.pikachus[0].sprite;
-        const b = this.pikachus[1].sprite;
-        if (!a || !b || !a.active || !b.active) return;
-        g.beginPath();
-        g.moveTo(a.x, a.y);
-        g.lineTo(b.x, b.y);
-        g.strokePath();
-        // 선분 접촉 데미지
+        // 모든 피카츄 페어 잇기 (2마리=1선, 3마리=삼각형 3선)
         const thr = 3;
-        for (const pl of [this.player1, this.player2]) {
-            if (!pl || !pl.sprite || !pl.sprite.active || pl.isInvincible) continue;
-            const pr = pl.size / 2;
-            const d2 = pointSegDistSq(pl.sprite.x, pl.sprite.y, a.x, a.y, b.x, b.y);
-            const lim = pr + thr;
-            if (d2 <= lim * lim) {
-                this.onBossBodyHit(pl);
-                break;
+        const players = [this.player1, this.player2];
+        for (let i = 0; i < this.pikachus.length; i += 1) {
+            for (let j = i + 1; j < this.pikachus.length; j += 1) {
+                const a = this.pikachus[i].sprite;
+                const b = this.pikachus[j].sprite;
+                if (!a || !b || !a.active || !b.active) continue;
+                g.beginPath();
+                g.moveTo(a.x, a.y);
+                g.lineTo(b.x, b.y);
+                g.strokePath();
+                // 선분 접촉 데미지 (페어별)
+                for (const pl of players) {
+                    if (!pl || !pl.sprite || !pl.sprite.active || pl.isInvincible) continue;
+                    const pr = pl.size / 2;
+                    const d2 = pointSegDistSq(pl.sprite.x, pl.sprite.y, a.x, a.y, b.x, b.y);
+                    const lim = pr + thr;
+                    if (d2 <= lim * lim) {
+                        this.onBossBodyHit(pl);
+                    }
+                }
             }
         }
     }
@@ -3631,10 +3916,14 @@ class GameScene extends Phaser.Scene {
         if (this.laserWall) {
             lines.push({ id: 'wallH', x1: 0, y1: this.laserWall.y, x2: W, y2: this.laserWall.y });
         }
-        if (this.pikachus.length >= 2 && this.pikachus[0].sprite && this.pikachus[1].sprite) {
-            const a = this.pikachus[0].sprite;
-            const b = this.pikachus[1].sprite;
-            lines.push({ id: 'pikachuWeb', x1: a.x, y1: a.y, x2: b.x, y2: b.y });
+        // 피카츄 페어 잇는 자기력선 (2마리=1선, 3마리=삼각형 3선). 라이더도 이 선들을 순회.
+        for (let i = 0; i < this.pikachus.length; i += 1) {
+            for (let j = i + 1; j < this.pikachus.length; j += 1) {
+                const a = this.pikachus[i]?.sprite;
+                const b = this.pikachus[j]?.sprite;
+                if (!a || !b || !a.active || !b.active) continue;
+                lines.push({ id: `pikachuWeb-${i}-${j}`, x1: a.x, y1: a.y, x2: b.x, y2: b.y });
+            }
         }
         return lines;
     }
@@ -4012,8 +4301,12 @@ class GameScene extends Phaser.Scene {
                 this.destroyCoils();
                 this.destroyEdgeFields();
             } else if (spec.type === 'thunderPhase3') {
-                // 인터루드 종료 시 찌리리공 완전 정리 (페이즈3엔 존재 안 함)
+                // 인터루드 종료 시 찌리리공 완전 정리 (자폭에서 이미 개별 destroy 됐어도 배열/스펙 정리)
                 this.destroyVoltorbs();
+                if (this.thunderP3Interlude?.warnLineGraphics) {
+                    this.thunderP3Interlude.warnLineGraphics.destroy();
+                }
+                this.thunderP3Interlude = null;
             }
             this.currentInterlude = null;
             this.interludeFrozen = false;
@@ -6451,7 +6744,7 @@ class GameScene extends Phaser.Scene {
             const targetCount = wc?.count ?? 3;
             // 새 조준 스폰 (시작 간격 도래한 만큼)
             while (s.waterAimStarted < targetCount) {
-                const dueAt = s.stateStartTime + s.waterAimStarted * (wc.aimStartIntervalMs ?? 500);
+                const dueAt = s.stateStartTime + (spec.postChargeDelayMs ?? 0) + s.waterAimStarted * (wc.aimStartIntervalMs ?? 500);
                 if (time < dueAt) break;
                 const shot = this.createSuicuneWaterCannonShot(dueAt, spec);
                 if (!shot) break; // 무적 캐릭터만 있으면 다음 프레임 재시도
