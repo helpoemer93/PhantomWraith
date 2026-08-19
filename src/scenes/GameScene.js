@@ -143,6 +143,10 @@ class GameScene extends Phaser.Scene {
         this.currentInterlude = null;
         this.interludeStartTime = 0;
         this.interludeFrozen = false;
+        // 디그다: 파괴 가능한 굴들 + 순간이동 사이클 상태.
+        this.digdaHoles = [];
+        this.digdaState = null;
+        this.digdaSpec = null;
 
         const loadout = this.registry.get('loadout') || {
             p1: [null, null, null, null], p2: [null, null, null, null],
@@ -689,6 +693,7 @@ class GameScene extends Phaser.Scene {
         this.updateConvergingWaves(time);
         this.updateEntei(time, delta);
         this.updateSuicunePhase3(time, delta);
+        this.updateDigda(time, delta);
 
         this.playerBullets.children.each((b) => {
             if (!b) return;
@@ -3232,15 +3237,16 @@ class GameScene extends Phaser.Scene {
         const linkK = web.linkPerCoil ?? 2;
 
         // 각 코일마다 가장 가까운 K기 인덱스 계산 → 라인 (중복은 정렬 pair set으로 제거)
+        // 돌진(charging) 중인 코일은 자기력선 연결에서 제외 — 자폭하러 이탈 중임을 시각적으로 표시.
         const linePairs = new Set();
         for (let i = 0; i < n; i += 1) {
             const ci = this.coils[i];
-            if (!ci.sprite || !ci.sprite.active) continue;
+            if (!ci.sprite || !ci.sprite.active || ci.charging) continue;
             const dists = [];
             for (let j = 0; j < n; j += 1) {
                 if (j === i) continue;
                 const cj = this.coils[j];
-                if (!cj.sprite || !cj.sprite.active) continue;
+                if (!cj.sprite || !cj.sprite.active || cj.charging) continue;
                 const dx = cj.sprite.x - ci.sprite.x;
                 const dy = cj.sprite.y - ci.sprite.y;
                 dists.push({ idx: j, d2: dx * dx + dy * dy });
@@ -4482,6 +4488,7 @@ class GameScene extends Phaser.Scene {
         this.destroyRaikou();
         this.destroyEntei();
         this.destroySuicunePhase3();
+        this.stopDigdaPhase();
         this.boss.destroy();
 
         const bossData = this.boss.data;
@@ -7021,5 +7028,205 @@ class GameScene extends Phaser.Scene {
         this.suicunePhase3Spec = null;
         this.suicunePhase3State = null;
         if (this.suicuneOverlayGraphics) this.suicuneOverlayGraphics.clear();
+    }
+
+    // ===== 디그다 =====
+    // 굴 순간이동 + 다중 사출. 무적 시작 굴 1개 + 5초마다 파괴 가능 굴 스폰.
+    // 1초마다 무작위 굴로 순간이동, 이동 직후 모든 굴에서 8발 3웨이브 미사일 발사.
+    startDigdaPhase(spec) {
+        this.digdaSpec = spec;
+        this.digdaHoles = [];
+        const start = spec.startHole ?? { x: 240, y: 400, invincible: true };
+        const startHole = this.spawnDigdaHole(start.x, start.y, !!start.invincible);
+        this.digdaState = {
+            lastSpawnTime: this.time.now,
+            lastTeleportTime: this.time.now,
+            currentHole: startHole,
+        };
+        // 디그다 본체를 시작 굴 위치로.
+        if (this.boss && this.boss.sprite) {
+            this.boss.sprite.x = start.x;
+            this.boss.sprite.y = start.y;
+        }
+    }
+
+    stopDigdaPhase() {
+        for (const h of this.digdaHoles) {
+            if (h.ring) h.ring.destroy();
+            if (h.inner) h.inner.destroy();
+        }
+        this.digdaHoles = [];
+        this.digdaState = null;
+        this.digdaSpec = null;
+    }
+
+    // 굴 시각: 바깥 링(색: 갈색/무적은 회색) + 안쪽 어두운 원.
+    spawnDigdaHole(x, y, invincible) {
+        const spec = this.digdaSpec;
+        const hs = spec?.hole ?? {};
+        const r = hs.radius ?? 18;
+        const ringColor = invincible
+            ? (hs.invincibleRingColor ?? 0xaaaaaa)
+            : (hs.ringColor ?? 0x8B4513);
+        const ring = this.add.circle(x, y, r + 2, ringColor);
+        ring.setDepth(-1);
+        const inner = this.add.circle(x, y, r, hs.innerColor ?? 0x111111);
+        inner.setDepth(-1);
+        const hole = {
+            x, y, radius: r,
+            hp: invincible ? Infinity : (hs.hp ?? 20),
+            invincible: !!invincible,
+            ring, inner,
+        };
+        this.digdaHoles.push(hole);
+        return hole;
+    }
+
+    // 캐릭터·기존 굴로부터 최소거리 확보하는 위치 탐색. 실패 시 null.
+    tryFindDigdaHolePosition() {
+        const spec = this.digdaSpec;
+        const sp = spec?.spawn ?? {};
+        const W = GameConfig.GAME_WIDTH;
+        const H = GameConfig.GAME_HEIGHT;
+        const mx = sp.marginX ?? 60;
+        const my = sp.marginY ?? 100;
+        const minDp = sp.minDistFromPlayer ?? 100;
+        const minDh = sp.minDistFromHole ?? 60;
+        const attempts = sp.maxAttempts ?? 20;
+        const players = [this.player1, this.player2].filter(
+            (p) => p && p.sprite && p.sprite.active
+        );
+        for (let i = 0; i < attempts; i += 1) {
+            const x = mx + Math.random() * (W - 2 * mx);
+            const y = my + Math.random() * (H - 2 * my);
+            let ok = true;
+            for (const p of players) {
+                const dx = p.sprite.x - x;
+                const dy = p.sprite.y - y;
+                if (dx * dx + dy * dy < minDp * minDp) { ok = false; break; }
+            }
+            if (!ok) continue;
+            for (const h of this.digdaHoles) {
+                const dx = h.x - x;
+                const dy = h.y - y;
+                if (dx * dx + dy * dy < minDh * minDh) { ok = false; break; }
+            }
+            if (ok) return { x, y };
+        }
+        return null;
+    }
+
+    // 무작위 굴(현재 위치 제외)로 순간이동. 이동 직후 3웨이브 발사 예약.
+    teleportDigdaToRandomHole(time) {
+        if (!this.boss || !this.boss.sprite || this.digdaHoles.length === 0) return;
+        const state = this.digdaState;
+        const candidates = this.digdaHoles.filter((h) => h !== state.currentHole);
+        const target = candidates.length > 0
+            ? candidates[Math.floor(Math.random() * candidates.length)]
+            : state.currentHole;
+        this.boss.sprite.x = target.x;
+        this.boss.sprite.y = target.y;
+        state.currentHole = target;
+        // 3웨이브 발사 (웨이브 0 즉시, 이후 waveIntervalMs 간격 예약).
+        const b = this.digdaSpec.burst;
+        const offsets = b.waveOffsetsDeg ?? [0, 22.5, 45];
+        const speeds = b.waveSpeeds ?? [100, 140, 180];
+        const gap = b.waveIntervalMs ?? 150;
+        this.fireDigdaHoleBurst(offsets[0] ?? 0, speeds[0] ?? 100);
+        for (let w = 1; w < offsets.length; w += 1) {
+            const off = offsets[w] ?? 0;
+            const spd = speeds[w] ?? 100;
+            this.time.delayedCall(gap * w, () => {
+                if (this.digdaState) this.fireDigdaHoleBurst(off, spd);
+            });
+        }
+    }
+
+    // 모든 활성 굴에서 count 개 미사일을 360° 균등 방출 (오프셋 각도 + 지정 속도).
+    fireDigdaHoleBurst(offsetDeg, speed) {
+        if (!this.digdaSpec) return;
+        const b = this.digdaSpec.burst;
+        const count = b.count ?? 8;
+        const stepDeg = 360 / count;
+        const bullet = b.bullet ?? {};
+        const r = bullet.radius ?? 4;
+        const color = bullet.color ?? 0xffaa66;
+        for (const h of this.digdaHoles) {
+            if (!h.inner || !h.inner.active) continue;
+            for (let i = 0; i < count; i += 1) {
+                const angRad = (offsetDeg + i * stepDeg) * Math.PI / 180;
+                const vx = Math.cos(angRad) * speed;
+                const vy = Math.sin(angRad) * speed;
+                this.spawnColoredCircleBullet(h.x, h.y, vx, vy, r, color);
+            }
+        }
+    }
+
+    // 매 프레임 사이클: 스폰 · 이동 · 접촉 데미지 · 총알 vs 굴 히트.
+    updateDigda(time, delta) {
+        if (!this.digdaState || !this.digdaSpec) return;
+        if (!this.boss || this.boss.isDead()) return;
+        const state = this.digdaState;
+        const spec = this.digdaSpec;
+
+        // 굴 스폰 사이클.
+        if (time - state.lastSpawnTime >= (spec.spawn?.intervalMs ?? 5000)) {
+            const pos = this.tryFindDigdaHolePosition();
+            if (pos) this.spawnDigdaHole(pos.x, pos.y, false);
+            state.lastSpawnTime = time;
+        }
+
+        // 순간이동 사이클.
+        if (time - state.lastTeleportTime >= (spec.teleport?.intervalMs ?? 1000)) {
+            this.teleportDigdaToRandomHole(time);
+            state.lastTeleportTime = time;
+        }
+
+        // 파괴 가능 굴 자연 감쇠 (초당 decayPerSecond 만큼 HP 감소 → 무한 누적 방지).
+        const decay = spec.hole?.decayPerSecond ?? 0;
+        if (decay > 0) {
+            const dt = delta / 1000;
+            for (let i = this.digdaHoles.length - 1; i >= 0; i -= 1) {
+                const h = this.digdaHoles[i];
+                if (h.invincible) continue;
+                h.hp -= decay * dt;
+                if (h.hp <= 0) this.destroyDigdaHole(h);
+            }
+        }
+
+        // 플레이어 총알 vs 파괴 가능 굴. 관통탄/부메랑은 tryPierceHit 로 재히트 관리.
+        this.playerBullets.children.each((bul) => {
+            if (!bul || !bul.active) return;
+            for (let i = this.digdaHoles.length - 1; i >= 0; i -= 1) {
+                const h = this.digdaHoles[i];
+                if (h.invincible || !h.inner || !h.inner.active) continue;
+                const dx = bul.x - h.x;
+                const dy = bul.y - h.y;
+                const rr = h.radius + (bul.body?.halfWidth ?? bul.radius ?? 4);
+                if (dx * dx + dy * dy > rr * rr) continue;
+                if (bul.pierce) {
+                    if (!this.tryPierceHit(bul, h)) continue;
+                    h.hp -= bul.damage ?? 1;
+                    if (h.hp <= 0) this.destroyDigdaHole(h);
+                } else {
+                    h.hp -= bul.damage ?? 1;
+                    if (h.hp <= 0) this.destroyDigdaHole(h);
+                    bul.destroy();
+                    break;
+                }
+            }
+        });
+    }
+
+    destroyDigdaHole(hole) {
+        const idx = this.digdaHoles.indexOf(hole);
+        if (idx < 0) return;
+        this.digdaHoles.splice(idx, 1);
+        if (hole.ring) hole.ring.destroy();
+        if (hole.inner) hole.inner.destroy();
+        // 파괴된 굴이 현재 디그다 위치면 다음 이동 사이클에서 다른 굴로 갈아탐(currentHole은 candidates 필터로 자연 제외).
+        if (this.digdaState && this.digdaState.currentHole === hole) {
+            this.digdaState.currentHole = null;
+        }
     }
 }

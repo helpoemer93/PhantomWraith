@@ -189,6 +189,11 @@ class BootScene extends Phaser.Scene {
             { label: '설정', scene: 'SettingsScene' },
             { label: '게임 초기화', action: 'reset', color: '#ff6666' },
         ];
+        // 개발 환경(localhost)에서만 노출. 배포판(GitHub Pages 등)에선 자동 비활성화.
+        if (isDevEnvironment()) {
+            this.items.splice(this.items.length - 1, 0,
+                { label: '모든 보스 해금 (DEV)', action: 'devUnlockAll', color: '#88ff88' });
+        }
         this.selectedIndex = 0;
 
         this.itemTexts = this.items.map((item, i) => {
@@ -254,6 +259,8 @@ class BootScene extends Phaser.Scene {
             const item = this.items[this.selectedIndex];
             if (item.action === 'reset') {
                 this.promptReset();
+            } else if (item.action === 'devUnlockAll') {
+                this.devUnlockAll();
             } else {
                 this.scene.start(item.scene);
             }
@@ -270,6 +277,19 @@ class BootScene extends Phaser.Scene {
         this.confirmingReset = false;
         this.confirmOverlay.setVisible(false);
         this.confirmText.setVisible(false);
+    }
+
+    devUnlockAll() {
+        const bossProgress = this.registry.get('bossProgress') || {};
+        for (const boss of Stages) bossProgress[boss.id] = MAX_BOSS_LEVEL;
+        this.registry.set('bossProgress', bossProgress);
+        const weaponLevels = this.registry.get('weaponLevels') || {};
+        const loadout = this.registry.get('loadout');
+        const crystals = this.registry.get('crystals') ?? 0;
+        const upgrades = this.registry.get('upgrades');
+        const challengeProgress = this.registry.get('challengeProgress');
+        Storage.save(weaponLevels, loadout, bossProgress, crystals, upgrades, challengeProgress);
+        this.scene.restart();
     }
 
     resetGame() {

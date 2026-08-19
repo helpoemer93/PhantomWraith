@@ -236,6 +236,9 @@ class Boss {
         if (phase.thunderRider && this.scene.startThunderRider) {
             this.scene.startThunderRider(phase.thunderRider);
         }
+        if (phase.digda && this.scene.startDigdaPhase) {
+            this.scene.startDigdaPhase(phase.digda);
+        }
         if (this.data.id === 'freezer' && index === 1 && this.scene.startFreezerWind) {
             this.scene.startFreezerWind();
         }

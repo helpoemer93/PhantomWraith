@@ -5,4 +5,5 @@ const Stages = [
     Suicune,
     Doopapang,
     Thunder,
+    Digda,
 ];
