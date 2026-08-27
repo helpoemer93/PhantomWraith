@@ -239,6 +239,15 @@ class Boss {
         if (phase.digda && this.scene.startDigdaPhase) {
             this.scene.startDigdaPhase(phase.digda);
         }
+        if (phase.digdaRockPillar && this.scene.startDigdaRockPillars) {
+            this.scene.startDigdaRockPillars(phase.digdaRockPillar);
+        }
+        if (phase.digdaPillarBurst && this.scene.startDigdaPillarBurst) {
+            this.scene.startDigdaPillarBurst(phase.digdaPillarBurst);
+        }
+        if (phase.digdaWallRunCycle && this.scene.startDigdaWallRunCycle) {
+            this.scene.startDigdaWallRunCycle(phase.digdaWallRunCycle);
+        }
         if (this.data.id === 'freezer' && index === 1 && this.scene.startFreezerWind) {
             this.scene.startFreezerWind();
         }

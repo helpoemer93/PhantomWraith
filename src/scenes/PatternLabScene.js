@@ -85,6 +85,7 @@ class PatternLabScene extends Phaser.Scene {
         this.birdEmitters = [];
         this.birdActivateLastTime = 0;
         this.birdCenterFireTime = null;
+        this.digdaWallRunLab = null;
 
         this.boss = new Boss(this, this.baseBossData, this.bossLevel, { autoStart: false });
         this.bossData = this.boss.data;
@@ -497,6 +498,13 @@ class PatternLabScene extends Phaser.Scene {
             this.interludeFrozen = false;
             return;
         }
+        if (inter.spec.type === 'digdaWallRun') {
+            this.startDigdaWallRunLab(inter.spec);
+            this.currentInterlude = inter;
+            this.interludeStartTime = this.time.now;
+            this.interludeFrozen = false;
+            return;
+        }
         this.currentInterlude = inter;
         this.interludeStartTime = this.time.now;
         this.interludeFrozen = false;
@@ -543,6 +551,7 @@ class PatternLabScene extends Phaser.Scene {
         this.despawnClouds();
         this.despawnBirdEmitters();
         this.despawnPlayers();
+        this.destroyDigdaWallRunLab();
         this.updateModeUI();
         this.setButtonsForMode();
     }
@@ -738,6 +747,7 @@ class PatternLabScene extends Phaser.Scene {
         this.updateConvergingWaves(time);
         this.updateEntei(time, delta);
         this.updateSuicunePhase3(time, delta);
+        this.updateDigdaWallRunLab(time, delta);
 
         this.bossBullets.children.each((b) => {
             if (!b) return;
@@ -758,6 +768,8 @@ class PatternLabScene extends Phaser.Scene {
     updateInterludeCycle(time) {
         if (!this.currentInterlude) return;
         const spec = this.currentInterlude.spec;
+        // digdaWallRun은 자체 update(updateDigdaWallRunLab)에서 종료·재시작 관리 — 프레임워크 개입 금지.
+        if (spec.type === 'digdaWallRun') return;
         const elapsed = time - this.interludeStartTime;
 
         if (spec.durationMs !== undefined) {
@@ -786,6 +798,143 @@ class PatternLabScene extends Phaser.Scene {
                 this.interludeFrozen = false;
             }
         }
+    }
+
+    // ===== digdaWallRun 인터루드 프리뷰 (스탠드얼론) =====
+    // GameScene의 wall_run 인터루드를 시각화용으로 축소한 버전.
+    // 보스/굴/상태 의존 없이 미사일(빨간 원)과 바위기둥만 표시. 아래벽 도달 시 자동 재시작.
+    startDigdaWallRunLab(spec) {
+        this.destroyDigdaWallRunLab();
+        const initialAngle = Math.PI / 2;
+        const spawnX = spec.spawnX ?? LAB_PLAY_W / 2;
+        const spawnY = spec.spawnY ?? 20;
+        const missileR = spec.missileRadius ?? 4;
+        const debugSprite = this.add.circle(spawnX, spawnY, missileR, 0xff0000);
+        debugSprite.setDepth(35);
+        // pillar spec: DigdaRockPillarSpec.pillar 재사용 (없으면 하드코딩 폴백).
+        const pillarSpec = (typeof DigdaRockPillarSpec !== 'undefined')
+            ? DigdaRockPillarSpec.pillar
+            : { radius: 20, color: 0x8B4513, strokeColor: 0x000000, strokeWidth: 2 };
+        this.digdaWallRunLab = {
+            x: spawnX,
+            y: spawnY,
+            angle: initialAngle,
+            initialAngle,
+            radius: missileR,
+            speed: spec.missileSpeed ?? 150,
+            rotationIv: spec.rotationIntervalMs ?? 1000,
+            rotDegMin: spec.rotationDegMin ?? 45,
+            rotDegMax: spec.rotationDegMax ?? 60,
+            firstRotationDeg: spec.firstRotationDeg ?? 45,
+            rotateOnSpawn: spec.rotateOnSpawn ?? true,
+            correctionMult: spec.correctionMultiplier ?? 1.5,
+            maxDurationMs: spec.maxDurationMs ?? 30000,
+            lastRotationTime: null,
+            nextRotDir: -1,
+            firstRotationDone: false,
+            startTime: null,
+            debugSprite,
+            pillars: [],
+            pillarSpec,
+        };
+        // 12시 위치 첫 기둥.
+        this.spawnDigdaWallRunPillarLab(spawnX, spawnY);
+    }
+
+    spawnDigdaWallRunPillarLab(x, y) {
+        const wr = this.digdaWallRunLab;
+        if (!wr) return;
+        const p = wr.pillarSpec;
+        const r = p.radius ?? 20;
+        const sprite = this.add.circle(x, y, r, p.color ?? 0x8B4513);
+        sprite.setStrokeStyle(p.strokeWidth ?? 2, p.strokeColor ?? 0x000000);
+        sprite.setDepth(2);
+        wr.pillars.push({ x, y, radius: r, sprite });
+    }
+
+    updateDigdaWallRunLab(time, delta) {
+        if (!this.digdaWallRunLab) return;
+        const wr = this.digdaWallRunLab;
+        if (wr.startTime === null) {
+            wr.startTime = time;
+            wr.lastRotationTime = wr.rotateOnSpawn ? (time - wr.rotationIv) : time;
+        }
+        if (time - wr.startTime >= wr.maxDurationMs) {
+            this.endDigdaWallRunLab();
+            return;
+        }
+        const dt = delta / 1000;
+        wr.x += Math.cos(wr.angle) * wr.speed * dt;
+        wr.y += Math.sin(wr.angle) * wr.speed * dt;
+        if (wr.debugSprite) { wr.debugSprite.x = wr.x; wr.debugSprite.y = wr.y; }
+
+        const W = LAB_PLAY_W;
+        const H = LAB_H;
+        const r = wr.radius;
+
+        if (wr.y + r >= H) {
+            this.endDigdaWallRunLab();
+            return;
+        }
+        // 반사 시 nextRotDir도 뒤집어야 alternation이 미사일 관점에서 일관되게 유지됨.
+        // 각 축 반사가 chirality 한 번 뒤집음 → XOR (코너=두 번 뒤집혀 원위치).
+        let flipDir = false;
+        if (wr.x - r < 0) { wr.x = r; wr.angle = Math.PI - wr.angle; flipDir = !flipDir; }
+        else if (wr.x + r > W) { wr.x = W - r; wr.angle = Math.PI - wr.angle; flipDir = !flipDir; }
+        if (wr.y - r < 0) { wr.y = r; wr.angle = -wr.angle; flipDir = !flipDir; }
+        if (flipDir) wr.nextRotDir *= -1;
+
+        if (time - wr.lastRotationTime >= wr.rotationIv) {
+            let deg;
+            if (!wr.firstRotationDone) {
+                deg = wr.firstRotationDeg;
+                wr.firstRotationDone = true;
+            } else {
+                deg = wr.rotDegMin + Math.random() * (wr.rotDegMax - wr.rotDegMin);
+            }
+            let dev = wr.angle - wr.initialAngle;
+            while (dev > Math.PI) dev -= 2 * Math.PI;
+            while (dev <= -Math.PI) dev += 2 * Math.PI;
+            if (Math.abs(dev) > Math.PI / 2) deg *= wr.correctionMult;
+            wr.angle += wr.nextRotDir * deg * Math.PI / 180;
+            wr.nextRotDir *= -1;
+            wr.lastRotationTime = time;
+        }
+
+        const pillarR = wr.pillarSpec?.radius ?? 20;
+        const diameter = pillarR * 2;
+        let nearestSq = Infinity;
+        for (const p of wr.pillars) {
+            const dx = p.x - wr.x;
+            const dy = p.y - wr.y;
+            const dSq = dx * dx + dy * dy;
+            if (dSq < nearestSq) nearestSq = dSq;
+        }
+        if (nearestSq > diameter * diameter) {
+            this.spawnDigdaWallRunPillarLab(wr.x, wr.y);
+        }
+    }
+
+    endDigdaWallRunLab() {
+        // 미사일·기둥 정리 후 인터루드 모드면 자동 재시작 (다른 durationMs 인터루드와 동일 흐름).
+        const inter = this.currentInterlude;
+        this.destroyDigdaWallRunLab();
+        if (this.mode === 'interlude' && inter && inter.spec?.type === 'digdaWallRun') {
+            this.setupInterludeCycle(inter);
+        } else {
+            this.currentInterlude = null;
+            this.interludeFrozen = false;
+        }
+    }
+
+    destroyDigdaWallRunLab() {
+        if (!this.digdaWallRunLab) return;
+        const wr = this.digdaWallRunLab;
+        if (wr.debugSprite) wr.debugSprite.destroy();
+        for (const p of wr.pillars) {
+            if (p.sprite) p.sprite.destroy();
+        }
+        this.digdaWallRunLab = null;
     }
 
     freezeAllSnowflakes(spec) {

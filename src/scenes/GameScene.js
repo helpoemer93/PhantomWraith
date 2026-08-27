@@ -147,6 +147,11 @@ class GameScene extends Phaser.Scene {
         this.digdaHoles = [];
         this.digdaState = null;
         this.digdaSpec = null;
+        this.digdaQuake = null;
+        this.digdaRockPillars = null;
+        this.digdaWallRun = null;
+        this.digdaPillarBurst = null;      // 페이즈 3: 바위기둥 파괴 사이클
+        this.digdaWallRunCycle = null;     // 페이즈 3: wallrun 반복 사이클
 
         const loadout = this.registry.get('loadout') || {
             p1: [null, null, null, null], p2: [null, null, null, null],
@@ -694,6 +699,12 @@ class GameScene extends Phaser.Scene {
         this.updateEntei(time, delta);
         this.updateSuicunePhase3(time, delta);
         this.updateDigda(time, delta);
+        this.updateDigdaQuakeInterlude(time);
+        this.updateDigdaRockPillars(time, delta);
+        this.updateDigdaWallRun(time, delta);
+        this.updateDigdaWallRunCycle(time, delta);
+        this.updateDigdaPillarBurst(time, delta);
+        this.updatePillarBurstMissiles(time);
 
         this.playerBullets.children.each((b) => {
             if (!b) return;
@@ -964,6 +975,14 @@ class GameScene extends Phaser.Scene {
             if (!g) continue;
             g.children.each((c) => push(c));
         }
+        // 디그다 굴 (inner sprite를 대표로 사용. 무적 굴은 리스트에서 제외 — 연쇄번개 링크 낭비 방지).
+        if (this.digdaHoles) {
+            for (const h of this.digdaHoles) if (!h.invincible) push(h.inner);
+        }
+        // 디그다 바위기둥.
+        if (this.digdaRockPillars) {
+            for (const p of this.digdaRockPillars.pillars) push(p.sprite);
+        }
         return list;
     }
 
@@ -974,6 +993,27 @@ class GameScene extends Phaser.Scene {
         if (this.boss && (target === this.boss.sprite || target === this.raikou || target === this.entei)) {
             const mult = (target === this.boss.sprite) ? this.bossDamageMultiplier() : 1;
             this.boss.onHit(damage * mult);
+            return;
+        }
+        // 디그다 굴: sprite.digdaHole 참조로 hole hp 감소.
+        if (target.digdaHole) {
+            const hole = target.digdaHole;
+            hole.hp -= damage;
+            if (hole.hp <= 0) this.destroyDigdaHole(hole);
+            return;
+        }
+        // 디그다 바위기둥: sprite.digdaPillar 참조로 pillar hp 감소.
+        if (target.digdaPillar) {
+            const pillar = target.digdaPillar;
+            if (pillar.invincibleFromBurst) return;   // 페이즈3 파괴 경고 중 → 무적.
+            pillar.hp -= damage;
+            if (pillar.hp <= 0) {
+                if (pillar.sprite && pillar.sprite.active) pillar.sprite.destroy();
+                if (this.digdaRockPillars) {
+                    const idx = this.digdaRockPillars.pillars.indexOf(pillar);
+                    if (idx >= 0) this.digdaRockPillars.pillars.splice(idx, 1);
+                }
+            }
             return;
         }
         // turret/drone: 그룹 소속이면 hp 필드 있음
@@ -2990,8 +3030,8 @@ class GameScene extends Phaser.Scene {
     // ===== 코일 폭발 스폰: 자포코일 위치에서 6방향으로 6마리 동시 발사 =====
     startCoilBurstSpawner(spec) {
         this.coilBurstSpec = spec;
-        // 즉시 스폰 옵션이면 다음 update에서 바로 발사되도록 lastTime을 intervalMs 전으로 설정
-        this.coilBurstLastTime = spec.immediate ? this.time.now - (spec.intervalMs ?? 6000) : this.time.now;
+        // Boss 생성자(씬 create) 중 this.time.now stale 방지 → 첫 update의 time으로 지연 초기화.
+        this.coilBurstLastTime = null;
         if (!this.magneticWebGraphics) {
             this.magneticWebGraphics = this.add.graphics();
             this.magneticWebGraphics.setDepth(-1);   // 코일·자포코일 뒤로
@@ -3005,6 +3045,10 @@ class GameScene extends Phaser.Scene {
     updateCoilBurstSpawner(time) {
         if (!this.coilBurstSpec) return;
         const spec = this.coilBurstSpec;
+        // 지연 초기화. immediate면 intervalMs 전 시각으로 세팅해 즉시 발사, 아니면 현재 시각.
+        if (this.coilBurstLastTime === null) {
+            this.coilBurstLastTime = spec.immediate ? time - (spec.intervalMs ?? 6000) : time;
+        }
         if (time - this.coilBurstLastTime < (spec.intervalMs ?? 6000)) return;
         // 자포코일 없거나 자폭 중이면 스폰 중지
         if (!this.magneton || this.magneton.state !== 'move') return;
@@ -3617,7 +3661,8 @@ class GameScene extends Phaser.Scene {
                 overlay,
                 radius: spec.radius,
                 vx, vy,
-                lastBurstTime: this.time.now,   // 첫 이동 시작 기준
+                // Boss 생성자에서 phase 진입 시 this.time.now stale 가능 → 첫 update의 time으로 지연 초기화.
+                lastBurstTime: null,
                 state: 'move',                  // 'move' | 'warn'
                 warnStartTime: 0,
             });
@@ -3646,6 +3691,7 @@ class GameScene extends Phaser.Scene {
 
         for (const v of this.voltorbs) {
             if (!v.sprite || !v.sprite.active) continue;
+            if (v.lastBurstTime === null) v.lastBurstTime = time;   // 지연 초기화.
             if (v.escape) {
                 // 이탈 모드: 벽 튕김 없이 관성 유지, 화면 밖 완전히 벗어나면 개별 destroy
                 v.sprite.x += v.vx * dt;
@@ -3977,7 +4023,8 @@ class GameScene extends Phaser.Scene {
             // 진행 방향: +1 = (x1,y1)→(x2,y2) 방향. 초기값 +1 (t가 1에 가까우면 -1).
             dir: (best.pr.t > 0.5 ? -1 : 1),
             switchCooldownEnd: 0,
-            lastFireTime: this.time.now,
+            // Boss 생성자에서 phase 진입 시 this.time.now stale 가능 → 첫 update의 time으로 지연 초기화.
+            lastFireTime: null,
         };
     }
 
@@ -4050,7 +4097,8 @@ class GameScene extends Phaser.Scene {
                 }
             }
         }
-        // 8방향 미사일 발사
+        // 8방향 미사일 발사 (lastFireTime null이면 지연 초기화 → 첫 update로 세팅).
+        if (this.thunderRider.lastFireTime === null) this.thunderRider.lastFireTime = time;
         if (time - this.thunderRider.lastFireTime >= (spec.fireIntervalMs ?? 1000)) {
             this.fireThunderRiderBurst(this.boss.sprite.x, this.boss.sprite.y, spec.bullet);
             this.thunderRider.lastFireTime = time;
@@ -4277,6 +4325,20 @@ class GameScene extends Phaser.Scene {
             this.interludeFrozen = false;
             return;
         }
+        if (inter.spec.type === 'digdaQuake') {
+            this.startDigdaQuakeInterlude(inter.spec);
+            this.currentInterlude = inter;
+            this.interludeStartTime = this.time.now;
+            this.interludeFrozen = false;
+            return;
+        }
+        if (inter.spec.type === 'digdaWallRun') {
+            this.startDigdaWallRunInterlude(inter.spec);
+            this.currentInterlude = inter;
+            this.interludeStartTime = this.time.now;
+            this.interludeFrozen = false;
+            return;
+        }
         this.currentInterlude = inter;
         this.interludeStartTime = this.time.now;
         this.interludeFrozen = false;
@@ -4314,6 +4376,8 @@ class GameScene extends Phaser.Scene {
                 }
                 this.thunderP3Interlude = null;
             }
+            // 참고: digdaQuake는 재발사 미사일 진동이 인터루드 종료 후에도 잠깐 이어져야 하므로
+            //       this.digdaQuake는 여기서 null 처리하지 않는다 (자체 update가 미사일 소멸 후 정리).
             this.currentInterlude = null;
             this.interludeFrozen = false;
         }
@@ -4353,7 +4417,7 @@ class GameScene extends Phaser.Scene {
         if (!player.canBeHit(time)) return;
         player.onHit(time);
         this.recordBotHit('bullet', this.classifyBossBullet(bullet), player);
-        if (!bullet.isGear && !bullet.isElectricField && !bullet.isCeilingOrb && !bullet.isSpiralOrb) bullet.destroy();
+        if (!bullet.isGear && !bullet.isElectricField && !bullet.isCeilingOrb && !bullet.isSpiralOrb && !bullet.isGroundSplit) bullet.destroy();
         this.lives -= 1;
         this.updateUI();
         if (this.lives <= 0) {
@@ -7039,9 +7103,14 @@ class GameScene extends Phaser.Scene {
         const start = spec.startHole ?? { x: 240, y: 400, invincible: true };
         const startHole = this.spawnDigdaHole(start.x, start.y, !!start.invincible);
         this.digdaState = {
-            lastSpawnTime: this.time.now,
-            lastTeleportTime: this.time.now,
+            // Boss 생성자(씬 create) 중엔 this.time.now가 stale할 수 있어 첫 updateDigda의 time 파라미터로 지연 초기화.
+            lastSpawnTime: null,
+            lastTeleportTime: null,
             currentHole: startHole,
+            lastGroundSplitTime: null,
+            groundSplits: [],           // 활성 땅가르기 미사일 (진행 중).
+            releasedAftershocks: [],    // 벽 도달 후 발사된 여진 (out-of-screen 소멸 대상).
+            attackCount: 0,             // 공격 카운터. moveEveryN마다 이동 트리거.
         };
         // 디그다 본체를 시작 굴 위치로.
         if (this.boss && this.boss.sprite) {
@@ -7056,8 +7125,26 @@ class GameScene extends Phaser.Scene {
             if (h.inner) h.inner.destroy();
         }
         this.digdaHoles = [];
+        if (this.digdaState) {
+            for (const gs of this.digdaState.groundSplits) {
+                if (gs.bullet && gs.bullet.active) gs.bullet.destroy();
+                for (const a of gs.aftershocks) {
+                    if (a && a.active) a.destroy();
+                }
+            }
+            for (const a of this.digdaState.releasedAftershocks) {
+                if (a && a.active) a.destroy();
+            }
+        }
         this.digdaState = null;
         this.digdaSpec = null;
+        // 인터루드 미사일이 남아있으면 정리 (보스 사망 시 호출).
+        if (this.digdaQuake) {
+            for (const m of this.digdaQuake.missiles) {
+                if (m.sprite && m.sprite.active) m.sprite.destroy();
+            }
+            this.digdaQuake = null;
+        }
     }
 
     // 굴 시각: 바깥 링(색: 갈색/무적은 회색) + 안쪽 어두운 원.
@@ -7078,6 +7165,10 @@ class GameScene extends Phaser.Scene {
             invincible: !!invincible,
             ring, inner,
         };
+        // 데미지 라우팅용 참조. getAllDamageableEnemies에서 inner를 뽑고,
+        // applyDamageToTarget이 sprite.digdaHole 있으면 굴 hp로 라우팅.
+        inner.digdaHole = hole;
+        inner.invincible = !!invincible;
         this.digdaHoles.push(hole);
         return hole;
     }
@@ -7117,16 +7208,18 @@ class GameScene extends Phaser.Scene {
     }
 
     // 무작위 굴(현재 위치 제외)로 순간이동. 이동 직후 3웨이브 발사 예약.
-    teleportDigdaToRandomHole(time) {
+    teleportDigdaToRandomHole(time, moveBoss = true) {
         if (!this.boss || !this.boss.sprite || this.digdaHoles.length === 0) return;
         const state = this.digdaState;
-        const candidates = this.digdaHoles.filter((h) => h !== state.currentHole);
-        const target = candidates.length > 0
-            ? candidates[Math.floor(Math.random() * candidates.length)]
-            : state.currentHole;
-        this.boss.sprite.x = target.x;
-        this.boss.sprite.y = target.y;
-        state.currentHole = target;
+        if (moveBoss) {
+            const candidates = this.digdaHoles.filter((h) => h !== state.currentHole);
+            const target = candidates.length > 0
+                ? candidates[Math.floor(Math.random() * candidates.length)]
+                : state.currentHole;
+            this.boss.sprite.x = target.x;
+            this.boss.sprite.y = target.y;
+            state.currentHole = target;
+        }
         // 3웨이브 발사 (웨이브 0 즉시, 이후 waveIntervalMs 간격 예약).
         const b = this.digdaSpec.burst;
         const offsets = b.waveOffsetsDeg ?? [0, 22.5, 45];
@@ -7142,24 +7235,894 @@ class GameScene extends Phaser.Scene {
         }
     }
 
-    // 모든 활성 굴에서 count 개 미사일을 360° 균등 방출 (오프셋 각도 + 지정 속도).
+    // 모든 활성 굴에서 미사일 방출. 디그다 본체가 있는 굴은 countAtBoss, 나머지는 countAtOther.
+    // aimAtPlayer면 각 굴의 0번째 발이 플레이어를 향하고 나머지는 stepDeg 간격.
     fireDigdaHoleBurst(offsetDeg, speed) {
         if (!this.digdaSpec) return;
         const b = this.digdaSpec.burst;
-        const count = b.count ?? 8;
-        const stepDeg = 360 / count;
+        const countAtBoss = b.countAtBoss ?? b.count ?? 12;
+        const countAtOther = b.countAtOther ?? b.count ?? 4;
         const bullet = b.bullet ?? {};
         const r = bullet.radius ?? 4;
         const color = bullet.color ?? 0xffaa66;
+        let aimTarget = null;
+        if (b.aimAtPlayer) {
+            if (this.player1 && this.player1.sprite && this.player1.sprite.active && !this.player1.isInvincible) aimTarget = this.player1;
+            else if (this.player2 && this.player2.sprite && this.player2.sprite.active && !this.player2.isInvincible) aimTarget = this.player2;
+        }
+        const bossHole = this.digdaState ? this.digdaState.currentHole : null;
         for (const h of this.digdaHoles) {
             if (!h.inner || !h.inner.active) continue;
+            const count = (h === bossHole) ? countAtBoss : countAtOther;
+            const stepDeg = count > 0 ? 360 / count : 360;
+            let baseDeg = offsetDeg;
+            if (aimTarget) {
+                const dx = aimTarget.sprite.x - h.x;
+                const dy = aimTarget.sprite.y - h.y;
+                baseDeg = Math.atan2(dy, dx) * 180 / Math.PI + offsetDeg;
+            }
             for (let i = 0; i < count; i += 1) {
-                const angRad = (offsetDeg + i * stepDeg) * Math.PI / 180;
+                const angRad = (baseDeg + i * stepDeg) * Math.PI / 180;
                 const vx = Math.cos(angRad) * speed;
                 const vy = Math.sin(angRad) * speed;
                 this.spawnColoredCircleBullet(h.x, h.y, vx, vy, r, color);
             }
         }
+    }
+
+    // 땅가르기 미사일 1발 스폰 (내부 헬퍼). 소환 위치에 첫 여진 쌍도 즉시 스폰 (구멍 방지).
+    spawnDigdaGroundSplitMissile(ox, oy, vx, vy, time) {
+        const gsSpec = this.digdaSpec.groundSplit;
+        const m = gsSpec.missile ?? {};
+        const aft = gsSpec.aftershock ?? {};
+        const bullet = this.spawnColoredCircleBullet(ox, oy, vx, vy, m.radius ?? 6, m.color ?? 0xffaa66);
+        bullet.damage = m.damage ?? 1;
+        bullet.isGroundSplit = true;   // 플레이어 히트 시 destroy 예외 (지진파 관통).
+        const gs = {
+            bullet,
+            spawnX: ox, spawnY: oy,
+            lastAftershockTime: time,
+            lastRotationTime: time,
+            nextRotDir: -1,   // -1 = 좌(반시계, 각도 감소), +1 = 우. 첫 회전은 좌.
+            firstRotationDone: false, // primary만 실사용. 첫 회전은 firstRotationDeg 고정.
+            aftershocks: [],
+            waiting: false,   // 벽 도달 후 파트너 대기 중이면 true.
+            partner: null,    // 짝 미사일 gs 참조 (fire 시 서로 연결).
+            isPrimary: false, // 페어의 리더. 회전은 primary가 주도하여 partner에도 동일 회전 적용(점대칭 보존).
+        };
+        // 소환 위치에 첫 여진 쌍 즉시 스폰 (100ms 후 다음 쌍이 스폰됨).
+        const aftCount = aft.countPerSpawn ?? 2;
+        const aftR = aft.radius ?? 3;
+        const aftColor = aft.color ?? 0xffaa66;
+        const aftDmg = aft.damage ?? 1;
+        for (let k = 0; k < aftCount; k += 1) {
+            const a = this.spawnColoredCircleBullet(ox, oy, 0, 0, aftR, aftColor);
+            a.damage = aftDmg;
+            a.isGroundSplit = true;
+            gs.aftershocks.push(a);
+        }
+        return gs;
+    }
+
+    // 땅가르기 미사일 짝 발사 (디그다 본체 위치 → 일반 캐릭터 조준 방향 + 정반대).
+    // 각 미사일 회전은 독립. isPrimary는 릴리즈 각도 기준용.
+    fireDigdaGroundSplit(time) {
+        const spec = this.digdaSpec?.groundSplit;
+        if (!spec || !this.boss || !this.boss.sprite) return;
+        const m = spec.missile ?? {};
+        const spd = m.speed ?? 100;
+        const ox = this.boss.sprite.x;
+        const oy = this.boss.sprite.y;
+        const target = this.getActivePlayerPos();
+        const dx = target.x - ox;
+        const dy = target.y - oy;
+        const len = Math.hypot(dx, dy) || 1;
+        const vx = (dx / len) * spd;
+        const vy = (dy / len) * spd;
+        const gsA = this.spawnDigdaGroundSplitMissile(ox, oy, vx, vy, time);
+        const gsB = this.spawnDigdaGroundSplitMissile(ox, oy, -vx, -vy, time);
+        gsA.isPrimary = true;
+        gsA.partner = gsB;
+        gsB.partner = gsA;
+        // 디버그: 짝 추적용 ID + 파트너 상실 감지용 플래그.
+        const pairId = `gs${Math.floor(time)}`;
+        gsA.pairId = pairId; gsA.role = 'A';
+        gsB.pairId = pairId; gsB.role = 'B';
+        gsA.partnerLostLogged = false;
+        gsB.partnerLostLogged = false;
+        console.log(`[DIGDA-GS] spawn pair=${pairId} A=(${Math.round(ox)},${Math.round(oy)}) v=(${vx.toFixed(1)},${vy.toFixed(1)}) t=${Math.round(time)}`);
+        this.digdaState.groundSplits.push(gsA, gsB);
+    }
+
+    // 벽 도달 순간 앞으로의 궤적을 픽스드 스텝으로 시뮬레이션 → 벽 밖 여진 위치들을 즉시 대량 스폰.
+    // 실제 update와 동일한 규칙(회전 간격/각도, 여진 스폰 간격/개수)으로 진행.
+    simulateDigdaGroundSplitOutside(gs, time) {
+        const spec = this.digdaSpec?.groundSplit;
+        if (!spec || !gs.bullet || !gs.bullet.body) return;
+        const m = spec.missile ?? {};
+        const spd = m.speed ?? 100;
+        const rotIv = spec.rotationIntervalMs ?? 1000;
+        const rotMin = spec.rotationDegMin ?? 45;
+        const rotMax = spec.rotationDegMax ?? 90;
+        const firstRotDeg = spec.firstRotationDeg ?? 45;
+        const aft = spec.aftershock ?? {};
+        const aftIv = aft.spawnIntervalMs ?? 100;
+        const aftCount = aft.countPerSpawn ?? 2;
+        const aftR = aft.radius ?? 3;
+        const aftColor = aft.color ?? 0xffaa66;
+        const aftDmg = aft.damage ?? 1;
+        const simMs = spec.outsideSimMs ?? 3000;
+        const stepMs = 16;
+
+        let simX = gs.bullet.x;
+        let simY = gs.bullet.y;
+        let simVx = gs.bullet.body.velocity.x;
+        let simVy = gs.bullet.body.velocity.y;
+        let simLastRot = gs.lastRotationTime;
+        let simNextRotDir = gs.nextRotDir;
+        let simFirstDone = gs.firstRotationDone;
+        let simLastAft = gs.lastAftershockTime;
+
+        const endT = time + simMs;
+        for (let t = time; t < endT; t += stepMs) {
+            simX += simVx * stepMs / 1000;
+            simY += simVy * stepMs / 1000;
+            const now = t + stepMs;
+            if (now - simLastRot >= rotIv) {
+                const deg = simFirstDone ? (rotMin + Math.random() * (rotMax - rotMin)) : firstRotDeg;
+                let ang = Math.atan2(simVy, simVx);
+                ang += simNextRotDir * deg * Math.PI / 180;
+                simVx = Math.cos(ang) * spd;
+                simVy = Math.sin(ang) * spd;
+                simNextRotDir *= -1;
+                simLastRot = now;
+                simFirstDone = true;
+            }
+            if (now - simLastAft >= aftIv) {
+                for (let k = 0; k < aftCount; k += 1) {
+                    const a = this.spawnColoredCircleBullet(simX, simY, 0, 0, aftR, aftColor);
+                    a.damage = aftDmg;
+                    a.isGroundSplit = true;
+                    gs.aftershocks.push(a);
+                }
+                simLastAft = now;
+            }
+        }
+    }
+
+    // 여진 릴리즈. ang는 두 세트에 공통 적용 (primary 미사일 기준으로 계산 후 넘김).
+    // 각 여진에 enteredScreen 플래그 세팅: 벽 밖 스폰 여진은 화면 진입 전 벽 소멸 검사 스킵용.
+    releaseDigdaGroundSplitAftershocks(gs, ang, aftSpd) {
+        const W = GameConfig.GAME_WIDTH;
+        const H = GameConfig.GAME_HEIGHT;
+        const fx = Math.cos(ang) * aftSpd;
+        const fy = Math.sin(ang) * aftSpd;
+        gs.aftershocks.forEach((a, idx) => {
+            if (!a || !a.active) return;
+            if (idx % 2 === 0) a.body.setVelocity(fx, fy);
+            else a.body.setVelocity(-fx, -fy);
+            const r = a.body?.halfWidth ?? a.radius ?? 3;
+            a.enteredScreen = (a.x - r >= 0 && a.x + r <= W && a.y - r >= 0 && a.y + r <= H);
+            this.digdaState.releasedAftershocks.push(a);
+        });
+    }
+
+    // 활성 땅가르기 미사일 프레임 업데이트: 여진 스폰 · 회전 · 벽 도달 처리.
+    updateDigdaGroundSplits(time) {
+        const spec = this.digdaSpec?.groundSplit;
+        if (!spec || !this.digdaState) return;
+        const W = GameConfig.GAME_WIDTH;
+        const H = GameConfig.GAME_HEIGHT;
+        const missileSpd = spec.missile?.speed ?? 100;
+        const rotIv = spec.rotationIntervalMs ?? 1000;
+        const rotMin = spec.rotationDegMin ?? 45;
+        const rotMax = spec.rotationDegMax ?? 90;
+        const firstRotDeg = spec.firstRotationDeg ?? 45;
+        const aft = spec.aftershock ?? {};
+        const aftIv = aft.spawnIntervalMs ?? 100;
+        const aftCount = aft.countPerSpawn ?? 2;
+        const aftR = aft.radius ?? 3;
+        const aftColor = aft.color ?? 0xffaa66;
+        const aftDmg = aft.damage ?? 1;
+        const aftSpd = aft.speed ?? 100;
+
+        // 스냅샷 순회 — 중간 splice로 인한 인덱스 어긋남·재처리 방지.
+        const snapshot = this.digdaState.groundSplits.slice();
+        for (const gs of snapshot) {
+            if (!gs.bullet || !gs.bullet.active) {
+                const idx = this.digdaState.groundSplits.indexOf(gs);
+                if (idx >= 0) this.digdaState.groundSplits.splice(idx, 1);
+                continue;
+            }
+            // 디버그: 파트너 상실 감지 (한 번만 로그).
+            if (!gs.partnerLostLogged && gs.partner && (!gs.partner.bullet || !gs.partner.bullet.active)) {
+                console.warn(`[DIGDA-GS] partner LOST pair=${gs.pairId} self=${gs.role} pos=(${Math.round(gs.bullet.x)},${Math.round(gs.bullet.y)}) selfWaiting=${gs.waiting} partnerWaiting=${gs.partner.waiting} t=${Math.round(time)}`);
+                gs.partnerLostLogged = true;
+            }
+            if (gs.waiting) continue;   // 벽 도달 상태 — 파트너 완료까지 정지.
+            // 여진 스폰 (정지 총알 2발).
+            if (time - gs.lastAftershockTime >= aftIv) {
+                for (let k = 0; k < aftCount; k += 1) {
+                    const a = this.spawnColoredCircleBullet(gs.bullet.x, gs.bullet.y, 0, 0, aftR, aftColor);
+                    a.damage = aftDmg;
+                    a.isGroundSplit = true;
+                    gs.aftershocks.push(a);
+                }
+                gs.lastAftershockTime = time;
+            }
+            // 회전 (즉시 각도 변경, 좌·우 번갈아). 각 미사일 독립.
+            if (time - gs.lastRotationTime >= rotIv) {
+                const body = gs.bullet.body;
+                if (body) {
+                    let ang = Math.atan2(body.velocity.y, body.velocity.x);
+                    const deg = gs.firstRotationDone ? (rotMin + Math.random() * (rotMax - rotMin)) : firstRotDeg;
+                    ang += gs.nextRotDir * deg * Math.PI / 180;
+                    body.setVelocity(Math.cos(ang) * missileSpd, Math.sin(ang) * missileSpd);
+                }
+                gs.nextRotDir *= -1;
+                gs.lastRotationTime = time;
+                gs.firstRotationDone = true;
+            }
+            // 벽 도달 판정 (미사일 반경 고려).
+            const r = gs.bullet.body?.halfWidth ?? gs.bullet.radius ?? 6;
+            if (gs.bullet.x - r <= 0 || gs.bullet.x + r >= W ||
+                gs.bullet.y - r <= 0 || gs.bullet.y + r >= H) {
+                // 벽 도달 → 앞으로의 궤적 시뮬레이션(벽 밖 여진 쇼쇽 스폰) → 정지 후 대기. 짝이 모두 대기 상태면 릴리즈.
+                this.simulateDigdaGroundSplitOutside(gs, time);
+                gs.bullet.body.setVelocity(0, 0);
+                gs.waiting = true;
+                const partnerAlive = gs.partner && gs.partner.bullet && gs.partner.bullet.active;
+                const partnerReady = partnerAlive && gs.partner.waiting;
+                // 안전망: 파트너가 사라졌으면 자기 혼자라도 릴리즈 → 벽 붙어 영구 대기 방지.
+                if (!partnerAlive || partnerReady) {
+                    // 릴리즈: primary 미사일의 (스폰→최종위치) 벡터의 수직 방향.
+                    // 파트너 없으면 자기 위치 기준.
+                    const primary = (gs.isPrimary || !partnerAlive) ? gs : gs.partner;
+                    const releaseAng = Math.atan2(primary.bullet.y - primary.spawnY, primary.bullet.x - primary.spawnX) + Math.PI / 2;
+                    this.releaseDigdaGroundSplitAftershocks(gs, releaseAng, aftSpd);
+                    if (partnerAlive) {
+                        this.releaseDigdaGroundSplitAftershocks(gs.partner, releaseAng, aftSpd);
+                        gs.partner.bullet.destroy();
+                        const partnerIdx = this.digdaState.groundSplits.indexOf(gs.partner);
+                        if (partnerIdx >= 0) this.digdaState.groundSplits.splice(partnerIdx, 1);
+                        console.log(`[DIGDA-GS] release pair=${gs.pairId} normal t=${Math.round(time)}`);
+                    } else {
+                        console.warn(`[DIGDA-GS] release pair=${gs.pairId} SOLO (partner missing) self=${gs.role} t=${Math.round(time)}`);
+                    }
+                    gs.bullet.destroy();
+                    const selfIdx = this.digdaState.groundSplits.indexOf(gs);
+                    if (selfIdx >= 0) this.digdaState.groundSplits.splice(selfIdx, 1);
+                }
+            }
+        }
+
+        // 발사된 여진 벽 소멸 처리. 벽 밖 시작 여진은 화면 진입 전엔 소멸 검사 스킵.
+        for (let i = this.digdaState.releasedAftershocks.length - 1; i >= 0; i -= 1) {
+            const a = this.digdaState.releasedAftershocks[i];
+            if (!a || !a.active) {
+                this.digdaState.releasedAftershocks.splice(i, 1);
+                continue;
+            }
+            const r = a.body?.halfWidth ?? a.radius ?? 3;
+            const inside = (a.x - r >= 0 && a.x + r <= W && a.y - r >= 0 && a.y + r <= H);
+            if (!a.enteredScreen && inside) a.enteredScreen = true;
+            if (a.enteredScreen && !inside) {
+                a.destroy();
+                this.digdaState.releasedAftershocks.splice(i, 1);
+            }
+        }
+    }
+
+    // 1→2 인터루드 진입: 디그다 중앙 순간이동 + 사방 90발 방사.
+    startDigdaQuakeInterlude(spec) {
+        if (!this.boss || !this.boss.sprite || !this.digdaState) return;
+        const cx = spec.centerX ?? GameConfig.GAME_WIDTH / 2;
+        const cy = spec.centerY ?? GameConfig.GAME_HEIGHT / 2;
+        this.boss.sprite.x = cx;
+        this.boss.sprite.y = cy;
+        // 중앙에 무적 굴 하나 (디그다가 만들어 이동). 인터루드 이후에도 유지.
+        const centerHole = this.spawnDigdaHole(cx, cy, true);
+        this.digdaState.currentHole = centerHole;
+        // 사방 방사.
+        const now = this.time.now;
+        const count = spec.count ?? 90;
+        const outSpd = spec.outboundSpeed ?? 60;
+        const m = spec.missile ?? {};
+        const r = m.radius ?? 4;
+        const color = m.color ?? 0xff8844;
+        const dmg = m.damage ?? 1;
+        const missiles = [];
+        for (let i = 0; i < count; i += 1) {
+            const angle = (i / count) * Math.PI * 2;
+            const vx = Math.cos(angle) * outSpd;
+            const vy = Math.sin(angle) * outSpd;
+            const b = this.spawnColoredCircleBullet(cx, cy, vx, vy, r, color);
+            b.damage = dmg;
+            missiles.push({
+                sprite: b,
+                angle,
+                state: 'outbound',      // 'outbound' | 'recalling' | 'gathered' | 'refired'
+                lastAfterimageTime: 0,
+            });
+        }
+        this.digdaQuake = {
+            centerX: cx, centerY: cy,
+            missiles,
+            startTime: now,
+            recallStartMs: spec.recallStartMs ?? 500,
+            recallBatchMs: spec.recallBatchMs ?? 100,
+            recallBatchSize: spec.recallBatchSize ?? 3,
+            recallSpeed: spec.recallSpeed ?? 500,
+            aftIv: spec.afterimageIntervalMs ?? 40,
+            aftFade: spec.afterimageFadeMs ?? 150,
+            refireAtMs: spec.refireAtMs ?? 4000,
+            refireSpeed: spec.refireSpeed ?? 250,
+            perpAmp: spec.perpAmp ?? 500,
+            perpFreq: spec.perpFreq ?? 25,
+            missileRadius: r,
+            missileColor: color,
+            refired: false,
+            refireStartTime: 0,
+            nextRecallBatchAt: now + (spec.recallStartMs ?? 500),
+        };
+    }
+
+    // 매 프레임 인터루드 미사일 상태 업데이트. 인터루드 종료 후에도 refired 미사일이
+    // 모두 소멸할 때까지 계속 돌아 (자연스러운 진동 유지).
+    updateDigdaQuakeInterlude(time) {
+        if (!this.digdaQuake) return;
+        const q = this.digdaQuake;
+        const elapsed = time - q.startTime;
+
+        // 회수 배치 (재발사 전까지).
+        if (!q.refired && elapsed >= q.recallStartMs && time >= q.nextRecallBatchAt) {
+            const outbound = q.missiles.filter((m) => m.state === 'outbound' && m.sprite && m.sprite.active);
+            const picks = Math.min(q.recallBatchSize, outbound.length);
+            for (let i = 0; i < picks; i += 1) {
+                const idx = Math.floor(Math.random() * outbound.length);
+                const m = outbound.splice(idx, 1)[0];
+                m.state = 'recalling';
+                m.lastAfterimageTime = time;
+            }
+            q.nextRecallBatchAt = time + q.recallBatchMs;
+        }
+
+        // 회수 중 미사일: 매 프레임 중앙 방향으로 재조준 + 잔상.
+        if (!q.refired) {
+            for (const m of q.missiles) {
+                if (!m.sprite || !m.sprite.active) continue;
+                if (m.state !== 'recalling') continue;
+                const dx = q.centerX - m.sprite.x;
+                const dy = q.centerY - m.sprite.y;
+                const dist = Math.hypot(dx, dy);
+                if (dist > 6) {
+                    m.sprite.body.setVelocity((dx / dist) * q.recallSpeed, (dy / dist) * q.recallSpeed);
+                } else {
+                    m.sprite.body.setVelocity(0, 0);
+                    m.state = 'gathered';
+                }
+                if (time - m.lastAfterimageTime >= q.aftIv) {
+                    const g = this.add.circle(m.sprite.x, m.sprite.y, q.missileRadius, q.missileColor, 0.5);
+                    this.tweens.add({
+                        targets: g, alpha: 0, duration: q.aftFade,
+                        onComplete: () => g.destroy(),
+                    });
+                    m.lastAfterimageTime = time;
+                }
+            }
+        }
+
+        // 재발사 트리거: 살아있는 모든 미사일이 'gathered' 상태에 도달했을 때. (한 발이라도 outbound/recalling이면 대기)
+        if (!q.refired) {
+            const anyPending = q.missiles.some((m) =>
+                m.sprite && m.sprite.active && m.state !== 'gathered'
+            );
+            const anyAlive = q.missiles.some((m) => m.sprite && m.sprite.active);
+            if (anyAlive && !anyPending) {
+                q.refired = true;
+                q.refireStartTime = time;
+                for (const m of q.missiles) {
+                    if (!m.sprite || !m.sprite.active) continue;
+                    m.state = 'refired';
+                    const vx = Math.cos(m.angle) * q.refireSpeed;
+                    const vy = Math.sin(m.angle) * q.refireSpeed;
+                    m.sprite.body.setVelocity(vx, vy);
+                }
+            }
+        }
+
+        // 재발사 후 매 프레임 sin 진동 velocity 적용.
+        if (q.refired) {
+            const t = (time - q.refireStartTime) / 1000;
+            const perpV = q.perpAmp * Math.sin(q.perpFreq * t);
+            for (const m of q.missiles) {
+                if (!m.sprite || !m.sprite.active) continue;
+                if (m.state !== 'refired') continue;
+                const fx = Math.cos(m.angle) * q.refireSpeed;
+                const fy = Math.sin(m.angle) * q.refireSpeed;
+                // 진행축 수직 CCW: (-sin θ, cos θ).
+                const px = -Math.sin(m.angle);
+                const py = Math.cos(m.angle);
+                m.sprite.body.setVelocity(fx + px * perpV, fy + py * perpV);
+            }
+            // 재발사 상태에서 활성 미사일 없으면 상태 소멸.
+            const anyAlive = q.missiles.some((m) => m.sprite && m.sprite.active);
+            if (!anyAlive) this.digdaQuake = null;
+        }
+    }
+
+    // 페이즈 2 진입 시 호출. 바위기둥 사이클 상태 초기화.
+    startDigdaRockPillars(spec) {
+        this.digdaRockPillars = {
+            spec,
+            lastFireTime: null,        // 지연 초기화 → 첫 update의 time으로 세팅해 즉시 첫 경고.
+            activeWarning: null,       // { x, y, spawnTime, graphics }
+            pillars: [],               // [{ sprite, hp, radius, contactDamage }]
+        };
+    }
+
+    // 매 프레임 바위기둥 사이클: 경고 → 기둥 스폰 → 히트/충돌 처리.
+    updateDigdaRockPillars(time, delta) {
+        if (!this.digdaRockPillars) return;
+        const rp = this.digdaRockPillars;
+        const spec = rp.spec;
+        // 보스 사망 시 정리.
+        if (!this.boss || this.boss.isDead()) {
+            if (rp.activeWarning) {
+                if (rp.activeWarning.fill) rp.activeWarning.fill.destroy();
+                if (rp.activeWarning.ring) rp.activeWarning.ring.destroy();
+                rp.activeWarning = null;
+            }
+            for (const p of rp.pillars) {
+                if (p.sprite && p.sprite.active) p.sprite.destroy();
+            }
+            rp.pillars = [];
+            this.digdaRockPillars = null;
+            return;
+        }
+
+        // 인터루드 중이면 신규 경고 트리거는 스킵 (activeWarning 없을 때 catch-up 방지).
+        // 진행 중이던 activeWarning은 인터루드 여부 무관하게 계속 진행·발사.
+        // 히트 판정(기둥 vs 플레이어·총알)도 계속 유지 → 미사일이 뿌린 기둥과 상호작용 필요.
+        const inInterlude = this.isInterludeActive && this.isInterludeActive();
+        const warnMs = spec.warnMs ?? 1000;
+        if (inInterlude && !rp.activeWarning) {
+            rp.lastFireTime = time;
+        }
+        if (!inInterlude && !rp.activeWarning) {
+            // 사이클 트리거: 마지막 발사 후 cycleMs - warnMs 경과 시 새 경고.
+            const cycleMs = spec.cycleMs ?? 4000;
+            const idleGap = cycleMs - warnMs;
+            const ready = rp.lastFireTime === null || (time - rp.lastFireTime >= idleGap);
+            if (ready) {
+                const target = this.getActivePlayerPos();
+                const w = spec.warning ?? {};
+                const r = spec.pillar?.radius ?? 20;
+                const fill = this.add.circle(target.x, target.y, r, w.color ?? 0xff4400, w.alphaStart ?? 0.1);
+                fill.setDepth(30);
+                const ring = this.add.circle(target.x, target.y, r, 0, 0);
+                ring.setStrokeStyle(w.strokeWidth ?? 2, w.strokeColor ?? 0xff4400, w.strokeAlpha ?? 0.85);
+                ring.setDepth(31);
+                rp.activeWarning = { x: target.x, y: target.y, spawnTime: time, fill, ring };
+            }
+        }
+
+        // 경고 진행: 알파 램프 + 만료 시 발사. 인터루드 중에도 계속 진행.
+        if (rp.activeWarning) {
+            const w = spec.warning ?? {};
+            const elapsed = time - rp.activeWarning.spawnTime;
+            const tt = Math.min(1, elapsed / warnMs);
+            const a = (w.alphaStart ?? 0.15) + ((w.alphaEnd ?? 0.6) - (w.alphaStart ?? 0.15)) * tt;
+            if (rp.activeWarning.fill) rp.activeWarning.fill.setAlpha(a);
+            if (elapsed >= warnMs) {
+                this.fireDigdaRockPillar(rp.activeWarning.x, rp.activeWarning.y, time);
+                if (rp.activeWarning.fill) rp.activeWarning.fill.destroy();
+                if (rp.activeWarning.ring) rp.activeWarning.ring.destroy();
+                rp.activeWarning = null;
+                rp.lastFireTime = time;
+            }
+        }
+
+        // 기둥 vs 플레이어 접촉 데미지.
+        for (const p of rp.pillars) {
+            if (!p.sprite || !p.sprite.active) continue;
+            for (const pl of [this.player1, this.player2]) {
+                if (!pl || !pl.sprite || !pl.sprite.active || pl.isInvincible) continue;
+                if (!pl.canBeHit(time)) continue;
+                const dx = pl.sprite.x - p.sprite.x;
+                const dy = pl.sprite.y - p.sprite.y;
+                const rr = p.radius + (pl.size ?? 20) / 2;
+                if (dx * dx + dy * dy > rr * rr) continue;
+                pl.onHit(time);
+                this.recordBotHit('digda-rock-pillar', null, pl);
+                this.lives -= p.contactDamage ?? 1;
+                this.updateUI();
+                if (this.lives <= 0) {
+                    this.gameOver = true;
+                    this.showGameOverMessage();
+                }
+            }
+        }
+
+        // 플레이어 총알 vs 기둥. 관통탄/부메랑은 tryPierceHit.
+        this.playerBullets.children.each((bul) => {
+            if (!bul || !bul.active) return;
+            for (let i = rp.pillars.length - 1; i >= 0; i -= 1) {
+                const p = rp.pillars[i];
+                if (!p.sprite || !p.sprite.active) continue;
+                if (p.invincibleFromBurst) continue;   // 페이즈3 파괴 경고 중 → 무적.
+                const dx = bul.x - p.sprite.x;
+                const dy = bul.y - p.sprite.y;
+                const rr = p.radius + (bul.body?.halfWidth ?? bul.radius ?? 4);
+                if (dx * dx + dy * dy > rr * rr) continue;
+                if (bul.pierce) {
+                    if (!this.tryPierceHit(bul, p)) continue;
+                    p.hp -= bul.damage ?? 1;
+                    if (p.hp <= 0) { p.sprite.destroy(); rp.pillars.splice(i, 1); }
+                } else {
+                    p.hp -= bul.damage ?? 1;
+                    if (p.hp <= 0) { p.sprite.destroy(); rp.pillars.splice(i, 1); }
+                    bul.destroy();
+                    break;
+                }
+            }
+        });
+    }
+
+    // 기둥 스폰. 생성된 pillar 객체를 리턴 (인터루드에서 추적용).
+    fireDigdaRockPillar(x, y, time) {
+        const rp = this.digdaRockPillars;
+        if (!rp) return null;
+        const spec = rp.spec;
+        const pspec = spec.pillar ?? {};
+        const r = pspec.radius ?? 20;
+        const pillarSprite = this.add.circle(x, y, r, pspec.color ?? 0x8B4513);
+        pillarSprite.setStrokeStyle(pspec.strokeWidth ?? 2, pspec.strokeColor ?? 0x000000);
+        pillarSprite.setDepth(2);
+        const pillar = {
+            sprite: pillarSprite,
+            hp: pspec.hp ?? 30,
+            radius: r,
+            contactDamage: pspec.contactDamage ?? 1,
+        };
+        // 데미지 라우팅용 참조. applyDamageToTarget이 sprite.digdaPillar 있으면 pillar hp로 라우팅.
+        pillarSprite.digdaPillar = pillar;
+        rp.pillars.push(pillar);
+        return pillar;
+    }
+
+    // 2→3 인터루드 진입 (또는 페이즈 3 사이클 재사용).
+    // 진행 중이던 페이즈2 패턴(땅가르기·여진·바위기둥 경고)은 정리하지 않고 그대로 진행.
+    // options.skipTeleport=true면 보스 순간이동·무적굴 확인 건너뜀 (페이즈 3 사이클용).
+    // options.onEnd 콜백은 wallrun 종료 시 호출됨 (있으면 페이즈 전환 로직 스킵).
+    startDigdaWallRunInterlude(spec, options = {}) {
+        if (!this.boss || !this.boss.sprite || !this.digdaState) return;
+        const skipTeleport = options.skipTeleport ?? false;
+        const onEnd = options.onEnd ?? null;
+        if (!skipTeleport) {
+            const cx = spec.centerX ?? GameConfig.GAME_WIDTH / 2;
+            const cy = spec.centerY ?? GameConfig.GAME_HEIGHT / 2;
+            this.boss.sprite.x = cx;
+            this.boss.sprite.y = cy;
+            // 중앙 무적굴은 페이즈1→2 인터루드에서 이미 존재. 안전상 없으면 생성.
+            let centerHole = this.digdaHoles.find(
+                (h) => h.invincible && Math.abs(h.x - cx) < 8 && Math.abs(h.y - cy) < 8
+            );
+            if (!centerHole) centerHole = this.spawnDigdaHole(cx, cy, true);
+            this.digdaState.currentHole = centerHole;
+        }
+
+        // 미사일 (좌표 추적 + 디버그용 빨간 원 sprite).
+        const initialAngle = Math.PI / 2; // Phaser: y-down이므로 아래 방향 = +π/2.
+        const spawnX = spec.spawnX ?? GameConfig.GAME_WIDTH / 2;
+        const spawnY = spec.spawnY ?? 20;
+        const missileR = spec.missileRadius ?? 4;
+        const debugSprite = this.add.circle(spawnX, spawnY, missileR, 0xff0000);
+        debugSprite.setDepth(35);
+        this.digdaWallRun = {
+            x: spawnX,
+            y: spawnY,
+            angle: initialAngle,
+            initialAngle,
+            radius: missileR,
+            speed: spec.missileSpeed ?? 150,
+            rotationIv: spec.rotationIntervalMs ?? 1000,
+            rotDegMin: spec.rotationDegMin ?? 45,
+            rotDegMax: spec.rotationDegMax ?? 60,
+            firstRotationDeg: spec.firstRotationDeg ?? 45,
+            rotateOnSpawn: spec.rotateOnSpawn ?? true,
+            correctionMult: spec.correctionMultiplier ?? 1.5,
+            maxDurationMs: spec.maxDurationMs ?? 30000,
+            lastRotationTime: null, // 지연 초기화 (첫 update의 time으로).
+            nextRotDir: -1,         // 첫 회전 좌 (음의 각도 회전).
+            firstRotationDone: false,
+            startTime: null,
+            debugSprite,
+            interludePillars: [],   // 이번 인터루드로 소환된 기둥만 추적 (거리 체크용).
+            onEnd,
+        };
+        // 12시 위치 즉시 첫 바위기둥. 기존 기둥과 겹칠 수 있음 (조건 검사 없이 발사).
+        const first = this.fireDigdaRockPillar(this.digdaWallRun.x, this.digdaWallRun.y, this.time.now);
+        if (first) this.digdaWallRun.interludePillars.push(first);
+    }
+
+    // 매 프레임: 투명 미사일 이동·회전·벽 반사·기둥 스폰. 아래 벽 도달 시 인터루드 종료.
+    updateDigdaWallRun(time, delta) {
+        if (!this.digdaWallRun) return;
+        const wr = this.digdaWallRun;
+        // 지연 초기화 (스폰 프레임의 time.now가 stale할 가능성 방어).
+        // rotateOnSpawn=true면 lastRotationTime을 과거로 밀어 첫 update에서 즉시 첫 회전 트리거.
+        if (wr.startTime === null) {
+            wr.startTime = time;
+            wr.lastRotationTime = wr.rotateOnSpawn ? (time - wr.rotationIv) : time;
+        }
+        // 안전망: 최대 지속 시간 초과 시 강제 종료.
+        if (time - wr.startTime >= wr.maxDurationMs) {
+            this.endDigdaWallRunInterlude();
+            return;
+        }
+        // 위치 이동.
+        const dt = delta / 1000;
+        wr.x += Math.cos(wr.angle) * wr.speed * dt;
+        wr.y += Math.sin(wr.angle) * wr.speed * dt;
+        // 디버그 sprite 위치 동기화.
+        if (wr.debugSprite) { wr.debugSprite.x = wr.x; wr.debugSprite.y = wr.y; }
+
+        const W = GameConfig.GAME_WIDTH;
+        const H = GameConfig.GAME_HEIGHT;
+        const r = wr.radius;
+
+        // 아래 벽: 인터루드 종료.
+        if (wr.y + r >= H) {
+            this.endDigdaWallRunInterlude();
+            return;
+        }
+        // 좌·우 벽 반사 (수직축 뒤집기: θ → π - θ). 각 반사는 미사일 chirality를 한 번 뒤집으므로
+        // nextRotDir도 함께 뒤집어야 alternation(좌우 번갈아)이 미사일 관점에서 일관되게 이어짐.
+        // 코너(양 벽 동시)는 두 번 뒤집혀 원위치 → XOR로 처리.
+        let flipDir = false;
+        if (wr.x - r < 0) {
+            wr.x = r;
+            wr.angle = Math.PI - wr.angle;
+            flipDir = !flipDir;
+        } else if (wr.x + r > W) {
+            wr.x = W - r;
+            wr.angle = Math.PI - wr.angle;
+            flipDir = !flipDir;
+        }
+        // 위 벽 반사 (수평축 뒤집기: θ → -θ).
+        if (wr.y - r < 0) {
+            wr.y = r;
+            wr.angle = -wr.angle;
+            flipDir = !flipDir;
+        }
+        if (flipDir) wr.nextRotDir *= -1;
+
+        // 1초마다 회전. 첫 회전은 firstRotationDeg 고정, 이후 rotDegMin~rotDegMax 랜덤.
+        // |초기방향 편차| > 90°이면 그 1회만 × 1.5.
+        if (time - wr.lastRotationTime >= wr.rotationIv) {
+            let deg;
+            if (!wr.firstRotationDone) {
+                deg = wr.firstRotationDeg;
+                wr.firstRotationDone = true;
+            } else {
+                deg = wr.rotDegMin + Math.random() * (wr.rotDegMax - wr.rotDegMin);
+            }
+            // (-π, π] 정규화.
+            let dev = wr.angle - wr.initialAngle;
+            while (dev > Math.PI) dev -= 2 * Math.PI;
+            while (dev <= -Math.PI) dev += 2 * Math.PI;
+            if (Math.abs(dev) > Math.PI / 2) deg *= wr.correctionMult;
+            wr.angle += wr.nextRotDir * deg * Math.PI / 180;
+            wr.nextRotDir *= -1;
+            wr.lastRotationTime = time;
+        }
+
+        // 기둥 스폰: '이번 인터루드로 소환된' 최근접 기둥과의 거리 > 지름이면 즉시 소환.
+        // 기존 페이즈2 사이클로 만들어진 기둥은 무시 → 겹칠 수 있음.
+        const rp = this.digdaRockPillars;
+        if (rp) {
+            const pillarR = rp.spec?.pillar?.radius ?? 20;
+            const diameter = pillarR * 2;
+            let nearestSq = Infinity;
+            for (const p of wr.interludePillars) {
+                if (!p.sprite || !p.sprite.active) continue;
+                const dx = p.sprite.x - wr.x;
+                const dy = p.sprite.y - wr.y;
+                const dSq = dx * dx + dy * dy;
+                if (dSq < nearestSq) nearestSq = dSq;
+            }
+            if (nearestSq > diameter * diameter) {
+                const p = this.fireDigdaRockPillar(wr.x, wr.y, time);
+                if (p) wr.interludePillars.push(p);
+            }
+        }
+    }
+
+    // 인터루드 종료. onEnd 콜백이 있으면 페이즈 전환 로직 스킵 (페이즈 3 사이클용).
+    // 없으면 원래 인터루드 종료 처리(페이즈 전환 즉시 트리거).
+    endDigdaWallRunInterlude() {
+        const onEnd = this.digdaWallRun ? this.digdaWallRun.onEnd : null;
+        if (this.digdaWallRun && this.digdaWallRun.debugSprite) {
+            this.digdaWallRun.debugSprite.destroy();
+        }
+        this.digdaWallRun = null;
+        if (onEnd) {
+            onEnd();
+            return;
+        }
+        this.currentInterlude = null;
+        this.interludeFrozen = false;
+        if (this.boss && this.boss.pendingNextPhase !== null) {
+            this.boss.pendingStartTime = -1e12;
+        }
+    }
+
+    // 페이즈 3: wallrun 반복 사이클. 페이즈 3 진입 즉시 첫 wallrun.
+    // wallrun 바닥 도달 후 postEndCooldownMs 지나면 다음 wallrun.
+    startDigdaWallRunCycle(spec) {
+        this.digdaWallRunCycle = {
+            spec,
+            lastEndTime: null,       // 마지막 wallrun 종료 시각 (null=아직 종료 없음)
+        };
+        this.triggerDigdaWallRunFromCycle();
+    }
+
+    triggerDigdaWallRunFromCycle() {
+        if (!this.digdaWallRunCycle) return;
+        if (this.digdaWallRun) return;    // 이미 진행 중이면 스킵 (안전망).
+        const cycle = this.digdaWallRunCycle;
+        this.startDigdaWallRunInterlude(cycle.spec.wallRunSpec, {
+            skipTeleport: true,
+            onEnd: () => {
+                if (this.digdaWallRunCycle) {
+                    this.digdaWallRunCycle.lastEndTime = this.time.now;
+                }
+            },
+        });
+    }
+
+    updateDigdaWallRunCycle(time, delta) {
+        if (!this.digdaWallRunCycle) return;
+        if (!this.boss || this.boss.isDead()) {
+            this.digdaWallRunCycle = null;
+            return;
+        }
+        const cycle = this.digdaWallRunCycle;
+        // wallrun 진행 중이면 대기.
+        if (this.digdaWallRun) return;
+        // 종료 후 쿨다운 대기.
+        if (cycle.lastEndTime === null) return;   // 아직 첫 종료 전.
+        const cd = cycle.spec.postEndCooldownMs ?? 13000;
+        if (time - cycle.lastEndTime >= cd) {
+            this.triggerDigdaWallRunFromCycle();
+        }
+    }
+
+    // 페이즈 3: 바위기둥 파괴 사이클. 8초마다 무작위 기둥 → 1초 경고(무적) → 파괴 + 8발 방사 + 굴 생성.
+    startDigdaPillarBurst(spec) {
+        this.digdaPillarBurst = {
+            spec,
+            state: 'idle',              // 'idle' | 'warning'
+            cycleStartTime: null,       // null=지연 초기화 (첫 update의 time으로).
+            activeWarning: null,        // { pillar, spawnTime, fill, ring }
+        };
+    }
+
+    updateDigdaPillarBurst(time, delta) {
+        if (!this.digdaPillarBurst) return;
+        const pb = this.digdaPillarBurst;
+        const spec = pb.spec;
+        if (!this.boss || this.boss.isDead()) {
+            if (pb.activeWarning) {
+                if (pb.activeWarning.fill) pb.activeWarning.fill.destroy();
+                if (pb.activeWarning.ring) pb.activeWarning.ring.destroy();
+                if (pb.activeWarning.pillar) pb.activeWarning.pillar.invincibleFromBurst = false;
+            }
+            this.digdaPillarBurst = null;
+            return;
+        }
+        if (pb.cycleStartTime === null) pb.cycleStartTime = time;
+
+        if (pb.state === 'idle') {
+            if (time - pb.cycleStartTime >= (spec.cycleMs ?? 8000)) {
+                const rp = this.digdaRockPillars;
+                const candidates = (rp && rp.pillars)
+                    ? rp.pillars.filter((p) => p.sprite && p.sprite.active && !p.invincibleFromBurst)
+                    : [];
+                if (candidates.length === 0) {
+                    // 스킵 → 다음 8초 대기.
+                    pb.cycleStartTime = time;
+                } else {
+                    const target = candidates[Math.floor(Math.random() * candidates.length)];
+                    target.invincibleFromBurst = true;
+                    const w = spec.warning ?? {};
+                    const r = target.radius * (w.radiusMultiplier ?? 1.5);
+                    const fill = this.add.circle(target.sprite.x, target.sprite.y, r, w.color ?? 0xff4400, w.alphaStart ?? 0.5);
+                    fill.setDepth(30);
+                    const ring = this.add.circle(target.sprite.x, target.sprite.y, r, 0, 0);
+                    ring.setStrokeStyle(w.strokeWidth ?? 4, w.strokeColor ?? 0xffff00, w.strokeAlpha ?? 1.0);
+                    ring.setDepth(31);
+                    pb.activeWarning = { pillar: target, spawnTime: time, fill, ring };
+                    pb.state = 'warning';
+                }
+            }
+        } else if (pb.state === 'warning') {
+            const aw = pb.activeWarning;
+            const targetGone = !aw || !aw.pillar || !aw.pillar.sprite || !aw.pillar.sprite.active;
+            if (targetGone) {
+                // 안전: 무적 처리했는데도 어떤 이유로 사라지면 (예: 씬 리셋) 정리.
+                if (aw && aw.fill) aw.fill.destroy();
+                if (aw && aw.ring) aw.ring.destroy();
+                pb.activeWarning = null;
+                pb.state = 'idle';
+                pb.cycleStartTime = time;
+                return;
+            }
+            const w = spec.warning ?? {};
+            const warnMs = spec.warnMs ?? 1000;
+            const elapsed = time - aw.spawnTime;
+            const tt = Math.min(1, elapsed / warnMs);
+            const a = (w.alphaStart ?? 0.15) + ((w.alphaEnd ?? 0.75) - (w.alphaStart ?? 0.15)) * tt;
+            if (aw.fill) aw.fill.setAlpha(a);
+            if (elapsed >= warnMs) {
+                // 파괴 → 방사 + 굴 생성.
+                const px = aw.pillar.sprite.x;
+                const py = aw.pillar.sprite.y;
+                aw.pillar.sprite.destroy();
+                const rp = this.digdaRockPillars;
+                if (rp) {
+                    const idx = rp.pillars.indexOf(aw.pillar);
+                    if (idx >= 0) rp.pillars.splice(idx, 1);
+                }
+                this.fireDigdaPillarBurstMissiles(px, py, spec, time);
+                this.spawnDigdaHole(px, py, false);
+                if (aw.fill) aw.fill.destroy();
+                if (aw.ring) aw.ring.destroy();
+                pb.activeWarning = null;
+                pb.state = 'idle';
+                pb.cycleStartTime = time;
+            }
+        }
+    }
+
+    // 8발 균등 방사. digdaQuake refire와 같은 sin 진동 궤적.
+    fireDigdaPillarBurstMissiles(x, y, spec, time) {
+        const m = spec.missile ?? {};
+        const count = spec.burstCount ?? 8;
+        const speed = m.speed ?? 125;
+        const perpAmp = m.perpAmp ?? 250;
+        const perpFreq = m.perpFreq ?? 25;
+        const r = m.radius ?? 4;
+        const color = m.color ?? 0xff8844;
+        const dmg = m.damage ?? 1;
+        for (let i = 0; i < count; i += 1) {
+            const angle = (i / count) * Math.PI * 2;
+            const vx = Math.cos(angle) * speed;
+            const vy = Math.sin(angle) * speed;
+            const b = this.spawnColoredCircleBullet(x, y, vx, vy, r, color);
+            b.damage = dmg;
+            b.isPillarBurst = true;
+            b.pillarBurstAngle = angle;
+            b.pillarBurstStartTime = time;
+            b.pillarBurstSpeed = speed;
+            b.pillarBurstPerpAmp = perpAmp;
+            b.pillarBurstPerpFreq = perpFreq;
+        }
+    }
+
+    // 매 프레임 sin 진동 velocity 재계산 (digdaQuake refire 로직과 동일 형태).
+    updatePillarBurstMissiles(time) {
+        this.bossBullets.children.each((b) => {
+            if (!b || !b.body || !b.isPillarBurst) return;
+            const t = (time - b.pillarBurstStartTime) / 1000;
+            const perpV = b.pillarBurstPerpAmp * Math.sin(b.pillarBurstPerpFreq * t);
+            const fx = Math.cos(b.pillarBurstAngle) * b.pillarBurstSpeed;
+            const fy = Math.sin(b.pillarBurstAngle) * b.pillarBurstSpeed;
+            const px = -Math.sin(b.pillarBurstAngle);
+            const py = Math.cos(b.pillarBurstAngle);
+            b.body.setVelocity(fx + px * perpV, fy + py * perpV);
+        });
     }
 
     // 매 프레임 사이클: 스폰 · 이동 · 접촉 데미지 · 총알 vs 굴 히트.
@@ -7169,18 +8132,47 @@ class GameScene extends Phaser.Scene {
         const state = this.digdaState;
         const spec = this.digdaSpec;
 
-        // 굴 스폰 사이클.
-        if (time - state.lastSpawnTime >= (spec.spawn?.intervalMs ?? 5000)) {
-            const pos = this.tryFindDigdaHolePosition();
-            if (pos) this.spawnDigdaHole(pos.x, pos.y, false);
+        // 지연 초기화: startDigdaPhase 시점 this.time.now가 stale할 수 있으므로 첫 프레임의 time으로 세팅.
+        if (state.lastSpawnTime === null) {
             state.lastSpawnTime = time;
+            state.lastTeleportTime = time;
+            state.lastGroundSplitTime = time;
         }
 
-        // 순간이동 사이클.
-        if (time - state.lastTeleportTime >= (spec.teleport?.intervalMs ?? 1000)) {
-            this.teleportDigdaToRandomHole(time);
+        // 인터루드 중이면 신규 발사 사이클(굴 스폰·순간이동·땅가르기) 스킵. 진행 중인 것만 계속.
+        const inInterlude = this.isInterludeActive && this.isInterludeActive();
+        if (inInterlude) {
+            // 인터루드 종료 직후 3개 사이클이 동시에 catch-up 발사되지 않도록 타임스탬프 유지.
+            state.lastSpawnTime = time;
             state.lastTeleportTime = time;
+            state.lastGroundSplitTime = time;
         }
+        if (!inInterlude) {
+            // 굴 스폰 사이클.
+            if (time - state.lastSpawnTime >= (spec.spawn?.intervalMs ?? 5000)) {
+                const pos = this.tryFindDigdaHolePosition();
+                if (pos) this.spawnDigdaHole(pos.x, pos.y, false);
+                state.lastSpawnTime = time;
+            }
+
+            // 공격 사이클: intervalMs마다 발사. moveEveryN번마다 순간이동 병행.
+            if (time - state.lastTeleportTime >= (spec.teleport?.intervalMs ?? 1200)) {
+                state.attackCount += 1;
+                const moveEveryN = spec.teleport?.moveEveryN ?? 2;
+                const shouldMove = (state.attackCount % moveEveryN === 1);
+                this.teleportDigdaToRandomHole(time, shouldMove);
+                state.lastTeleportTime = time;
+            }
+
+            // 땅가르기 사이클 (쿨타임 지나면 1발 발사).
+            const gsCd = spec.groundSplit?.cooldownMs ?? 8000;
+            if (time - state.lastGroundSplitTime >= gsCd) {
+                this.fireDigdaGroundSplit(time);
+                state.lastGroundSplitTime = time;
+            }
+        }
+        // 진행 중인 땅가르기 미사일/여진은 인터루드 여부와 관계없이 계속 업데이트.
+        this.updateDigdaGroundSplits(time);
 
         // 파괴 가능 굴 자연 감쇠 (초당 decayPerSecond 만큼 HP 감소 → 무한 누적 방지).
         const decay = spec.hole?.decayPerSecond ?? 0;
